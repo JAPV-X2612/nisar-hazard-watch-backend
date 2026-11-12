@@ -1,0 +1,10 @@
+from enum import StrEnum
+
+PROBLEM_CONTENT_TYPE = "application/problem+json"
+
+
+class ReasonCode(StrEnum):
+    INVALID_REQUEST = "INVALID_REQUEST"
+    NOT_FOUND = "NOT_FOUND"
+    METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
