@@ -1,0 +1,54 @@
+[project]
+name = "nisar-bench"
+version = "0.1.0"
+description = "Benchmark harness that calibrates how NISAR data is fetched for NISAR Hazard Watch"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "aiohttp>=3.14.5",
+    "asf-search>=14.1.0",
+    "fsspec>=2026.9.0",
+    "h5py>=3.16.0",
+    "matplotlib>=3.11.2",
+    "modal>=1.6.4",
+    "numpy>=2.5.4",
+    "pandas>=3.1.1",
+    "pyfive>=1.3.1",
+    "pyproj>=3.8.0",
+    "requests>=2.34.2",
+    "shapely>=2.2.0",
+    "xarray>=2026.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pandas-stubs>=3.1.0.261029",
+    "pyright>=1.1.414",
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nisar_bench"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "PT", "RUF", "C4", "PIE"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
