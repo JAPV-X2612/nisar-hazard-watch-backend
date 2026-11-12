@@ -53,14 +53,14 @@ Payload fields are camelCase.
 ```
 src/nisar_hazard_watch/
   api/          app factory, composition root, middlewares (request id, unexpected errors), error handlers, routes/<resource>/
-  services/     use cases (HealthService)
-  ports/        interfaces the services depend on (DependencyProbe)
-  adapters/     implementations: db/, nasa/, credentials/
+  services/     use cases: HealthService, ScenePlanner (and scene_selection)
+  ports/        interfaces the services depend on (DependencyProbe, SarCatalog)
+  adapters/     implementations: db/, nasa/ (CMR health), asf/ (scene catalog), credentials/
   models/       camelCase DTOs (CamelModel), problem details, health
   constants/    routes, headers, reason codes, enums: no magic strings
   config/       settings (pydantic-settings)
   exceptions/   AppError and subclasses
-  utils/        logging, request context, database url, timing
+  utils/        logging, request context, database url, timing, geometry (areas of interest)
 migrations/     Alembic (async), baseline revision 0001
 tests/          unit/ (mirrors src), integration/ (Postgres), live/ (NASA)
 ```
@@ -73,13 +73,17 @@ tests/          unit/ (mirrors src), integration/ (Postgres), live/ (NASA)
 4. Put logic in `services/`, depend on a `ports/` interface and implement it in `adapters/`.
 5. Write DTOs as `CamelModel` subclasses and the tests mirroring the source path.
 
+## Scene planning (SAR core)
+
+`ScenePlanner` turns an area of interest and "now" into the exact scenes to read. The area comes from `aoi_from_point` (the 10.24 km square in the local UTM zone) or `aoi_from_geojson` (a drawn polygon: closed ring, up to 100 vertices, repaired with `buffer(0)`, split at ±180°, measured on the ellipsoid and capped by native pixels: about 110 km² is the ideal, 400 km² the hard limit). `AsfCatalog` queries the public ASF SearchAPI once for the last five months without maturity or configuration filters (maturity is read from the product URL) and fails loudly instead of returning a truncated list. The planner keeps one scene per acquisition (VALIDATED over PROVISIONAL over BETA over urgent response, then CRID and version), picks one track/direction/frame group (full coverage, dual-pol, most dates, newest) and walks back from the newest scene in steps of about 30 days (± 6) up to five images. Fewer than four usable dates is an `insufficientHistory` plan, no scene at all is `noCoverage`, and `maturityMixed` tells the UI when the series mixes maturities.
+
 ## Testing
 
 ```bash
 uv run pytest                                      # unit tests, no network, 80 % coverage gate
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nisar_hazard_watch \
   uv run pytest -m integration                     # needs a real PostgreSQL
-uv run pytest -m live                              # calls the real NASA CMR
+uv run pytest -m live                              # calls the real NASA CMR and ASF catalog
 ```
 
 ## Quality

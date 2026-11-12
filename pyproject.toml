@@ -12,6 +12,8 @@ dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
+    "pyproj>=3.8.0",
+    "shapely>=2.2.0",
     "sqlalchemy[asyncio]>=2.1.8",
     "uvicorn[standard]>=0.54.0",
 ]
