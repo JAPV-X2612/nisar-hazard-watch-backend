@@ -21,6 +21,7 @@ DEFAULT_TRUSTED_PROXY_HOPS = 2
 # Measured 2026-11-12: a fresh area takes 47 to 147 s (reading the scenes dominates); the worker
 # itself may run 240 s. A shorter deadline answered `partial` for jobs that finished a minute later.
 DEFAULT_EXPLORATION_DEADLINE_SECONDS = 180.0
+DEFAULT_ETA_PRIOR_SECONDS = 140.0
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
 SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret")
 
@@ -49,7 +50,7 @@ class Settings(BaseSettings):
     exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)
     rate_limit_per_minute: int = Field(default=20, ge=1)
     trusted_proxy_hops: int = Field(default=DEFAULT_TRUSTED_PROXY_HOPS, ge=0)
-    eta_prior_seconds: float = Field(default=60.0, gt=0)
+    eta_prior_seconds: float = Field(default=DEFAULT_ETA_PRIOR_SECONDS, gt=0)
     precomputed_cases_path: str | None = None
     earthdata_token: SecretStr | None = None
     modal_token_id: SecretStr | None = None

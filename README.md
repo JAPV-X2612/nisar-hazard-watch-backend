@@ -32,11 +32,11 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `ML_GATEWAY_URL` | `https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run` | Modal gateway that runs the analysis of a scene plan (the production app `nisar-hazard-watch-ml`, deployed from `main` of `NISAR-Modeling`) |
 | `RUNNER` | `gateway` | `gateway`, or `inProcess` (synthetic results labelled as demo; refused in production) |
 | `MAX_ACTIVE_EXPLORATIONS` | `5` | Explorations running at once; more get `503 QUEUE_FULL` |
-| `EXPLORATION_DEADLINE_SECONDS` | `180` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL`. Real runs took 47 s to 147 s on fresh areas (the worker may run 240 s), so the one-minute goal is the typical case, not the limit |
+| `EXPLORATION_DEADLINE_SECONDS` | `180` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL`. Fresh areas measured 117 s to 152 s end to end (about 100 s of it reading the scenes), cached areas answer at once, and the worker may run 240 s |
 | `EXPLORATION_CACHE_TTL_SECONDS` | `86400` | A finished exploration with the same lens, area and scenes is reused for this long |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Requests per client to the exploration and coverage endpoints |
 | `TRUSTED_PROXY_HOPS` | `2` | Entries the proxies in front of the API append to `X-Forwarded-For` (measured on Railway's edge: 2; with 1 every request landed in a different bucket and the limit never fired; recount if another proxy such as a Vercel rewrite is added). The client is that many entries from the right, so a spoofed leading address cannot dodge the limit; `0` ignores the header and uses the socket peer |
-| `ETA_PRIOR_SECONDS` | `60` | ETA until three comparable runs exist; then the p80 of the last 50 |
+| `ETA_PRIOR_SECONDS` | `140` | ETA until three comparable runs exist; then the p80 of the last 50 |
 | `ASF_TIMEOUT_SECONDS`, `GATEWAY_TIMEOUT_SECONDS` | `30`, `20` | HTTP timeouts towards the ASF catalog and the ML gateway (> 0) |
 | `PRECOMPUTED_CASES_PATH` | unset | JSON list of precomputed cases offered when the catalog is down |
 | `EARTHDATA_TOKEN` | unset | Reported as configured or not (blank counts as missing); never logged or returned |
