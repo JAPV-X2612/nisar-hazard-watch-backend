@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -58,12 +58,15 @@ class ScriptedRunner:
         self.submissions: list[RunnerJob] = []
         self.submit_ticket = RunnerTicket(run_id="run-1", state=RunnerState.RUNNING)
         self.poll_ticket: RunnerTicket | Exception = self.submit_ticket
+        self.while_polling: Callable[[], Awaitable[None]] | None = None
 
     async def submit(self, job: RunnerJob) -> RunnerTicket:
         self.submissions.append(job)
         return self.submit_ticket
 
     async def poll(self, run_id: str) -> RunnerTicket:
+        if self.while_polling is not None:
+            await self.while_polling()
         if isinstance(self.poll_ticket, Exception):
             raise self.poll_ticket
         return self.poll_ticket

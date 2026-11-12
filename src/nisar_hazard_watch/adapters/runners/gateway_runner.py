@@ -1,10 +1,19 @@
 import logging
+from http import HTTPStatus
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
-from nisar_hazard_watch.constants.explorations import RunnerState
+from nisar_hazard_watch.constants.explorations import (
+    GATEWAY_OPERATION,
+    GatewayCache,
+    GatewayErrorCode,
+    GatewayStatus,
+    LayerKind,
+    RunnerState,
+    TimingKey,
+)
 from nisar_hazard_watch.constants.sar import Configuration, Maturity
 from nisar_hazard_watch.exceptions.exploration_errors import QueueFullError, RunnerUnavailableError
 from nisar_hazard_watch.models.scene import Scene
@@ -19,12 +28,13 @@ from nisar_hazard_watch.utils.geometry import aoi_center, window_pixels
 logger = logging.getLogger(__name__)
 
 JOBS_PATH = "/v2/jobs"
-BUSY_STATUSES = (429, 503)
+BUSY_STATUSES = (HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE)
+UNEXPECTED_ANSWER = "the analysis service answered unexpectedly"
 STATE_BY_GATEWAY_STATUS = {
-    "queued": RunnerState.QUEUED,
-    "running": RunnerState.RUNNING,
-    "succeeded": RunnerState.SUCCEEDED,
-    "failed": RunnerState.FAILED,
+    GatewayStatus.QUEUED.value: RunnerState.QUEUED,
+    GatewayStatus.RUNNING.value: RunnerState.RUNNING,
+    GatewayStatus.SUCCEEDED.value: RunnerState.SUCCEEDED,
+    GatewayStatus.FAILED.value: RunnerState.FAILED,
 }
 COLLECTION_BY_MATURITY = {
     Maturity.PROVISIONAL: "PROVISIONAL",
@@ -33,12 +43,12 @@ COLLECTION_BY_MATURITY = {
 }
 URGENT_RESPONSE_COLLECTION = "UR"
 LAYER_KINDS = (
-    ("display_baseline_change", "change"),
-    ("display_flood_signature", "diagnostic"),
-    ("display_agriculture", "diagnostic"),
-    ("display_cross_pol_pattern", "diagnostic"),
-    ("display_optical", "diagnostic"),
-    ("display_", "observed"),
+    ("display_baseline_change", LayerKind.CHANGE),
+    ("display_flood_signature", LayerKind.DIAGNOSTIC),
+    ("display_agriculture", LayerKind.DIAGNOSTIC),
+    ("display_cross_pol_pattern", LayerKind.DIAGNOSTIC),
+    ("display_optical", LayerKind.DIAGNOSTIC),
+    ("display_", LayerKind.OBSERVED),
 )
 
 
@@ -51,8 +61,8 @@ def _collection(scene: Scene) -> str:
 def _layer_kind(layer_id: str) -> str:
     for prefix, kind in LAYER_KINDS:
         if layer_id.startswith(prefix):
-            return kind
-    return "layer"
+            return kind.value
+    return LayerKind.GENERIC.value
 
 
 def _layer_title(layer_id: str) -> str:
@@ -72,7 +82,13 @@ class GatewayRunner:
         return self._ticket(payload=self._payload(response=response))
 
     async def poll(self, run_id: str) -> RunnerTicket:
-        response = await self._request("GET", f"{JOBS_PATH}/{run_id}")
+        response = await self._request("GET", f"{JOBS_PATH}/{quote(run_id, safe='')}")
+        if response.status_code == HTTPStatus.NOT_FOUND:
+            return RunnerTicket(
+                run_id=run_id,
+                state=RunnerState.FAILED,
+                error_code=GatewayErrorCode.JOB_NOT_FOUND.value,
+            )
         return self._ticket(payload=self._payload(response=response))
 
     def _body(self, job: RunnerJob) -> dict[str, Any]:
@@ -80,7 +96,7 @@ class GatewayRunner:
         longitude, latitude = aoi_center(aoi=aoi)
         pixels, _ = window_pixels(aoi=aoi)
         body: dict[str, Any] = {
-            "operation": "explore",
+            "operation": GATEWAY_OPERATION,
             "longitude": round(longitude, 5),
             "latitude": round(latitude, 5),
             "start_date": job.plan.window_start.date().isoformat(),
@@ -111,25 +127,34 @@ class GatewayRunner:
     def _payload(response: httpx.Response) -> dict[str, Any]:
         try:
             payload = response.json()
-            if response.status_code == 404:
-                return {"job_id": "", "status": "failed", "error": {"code": "job_not_found"}}
-            if response.status_code >= 400 or "status" not in payload:
-                raise ValueError(f"unexpected answer {response.status_code}")
         except ValueError as exc:
-            logger.warning("ML gateway answered %s: %s", response.status_code, response.text[:300])
-            raise RunnerUnavailableError("the analysis service answered unexpectedly") from exc
+            raise GatewayRunner._unexpected(response=response) from exc
+        if response.status_code >= HTTPStatus.BAD_REQUEST or not isinstance(payload, dict):
+            raise GatewayRunner._unexpected(response=response)
         return payload
 
+    @staticmethod
+    def _unexpected(response: httpx.Response) -> RunnerUnavailableError:
+        logger.warning("ML gateway answered %s: %s", response.status_code, response.text[:300])
+        return RunnerUnavailableError(UNEXPECTED_ANSWER)
+
     def _ticket(self, payload: dict[str, Any]) -> RunnerTicket:
-        state = STATE_BY_GATEWAY_STATUS.get(payload["status"], RunnerState.FAILED)
+        try:
+            return self._build_ticket(payload=payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("ML gateway answer could not be read", exc_info=True)
+            raise RunnerUnavailableError(UNEXPECTED_ANSWER) from exc
+
+    def _build_ticket(self, payload: dict[str, Any]) -> RunnerTicket:
+        state = STATE_BY_GATEWAY_STATUS[payload["status"]]
         error = payload.get("error") or {}
         result = None
         if state is RunnerState.SUCCEEDED and payload.get("result"):
             result = self._result(payload["result"])
         return RunnerTicket(
-            run_id=payload.get("job_id", ""),
+            run_id=str(payload.get("job_id", "")),
             state=state,
-            cached=payload.get("cache") == "hit",
+            cached=payload.get("cache") == GatewayCache.HIT.value,
             result=result,
             error_code=error.get("code") if state is RunnerState.FAILED else None,
         )
@@ -137,8 +162,8 @@ class GatewayRunner:
     def _result(self, result: dict[str, Any]) -> RunnerResult:
         science = result.get("science") or {}
         timings = {key: float(value) for key, value in (science.get("timings") or {}).items()}
-        timings["elapsed_s"] = float(result.get("elapsed_seconds", 0.0))
-        timings["render_s"] = float(result.get("visualization_seconds", 0.0))
+        timings[TimingKey.ELAPSED.value] = float(result.get("elapsed_seconds", 0.0))
+        timings[TimingKey.RENDER.value] = float(result.get("visualization_seconds", 0.0))
         lens = science.get("lens")
         window = ((lens or {}).get("radar") or {}).get("grid") or {}
         return RunnerResult(
@@ -156,6 +181,12 @@ class GatewayRunner:
             timings=timings,
         )
 
+    def _layer_url(self, path: str) -> str:
+        url = urljoin(self._base_url + "/", path)
+        if urlsplit(url)[:2] != urlsplit(self._base_url)[:2]:
+            raise ValueError(f"layer URL {url!r} is not served by the analysis service")
+        return url
+
     @staticmethod
     def _observation(row: dict[str, Any]) -> dict[str, Any]:
         keys = ("date", "status", "reason", "granule_id")
@@ -171,7 +202,7 @@ class GatewayRunner:
             units=str(layer.get("units", "")),
             colormap=str(layer.get("colormap", "")),
             bounds=tuple(layer["bounds"]),
-            url=urljoin(self._base_url + "/", str(layer["png_url"]).lstrip("/")),
+            url=self._layer_url(path=str(layer["png_url"])),
             legend=layer.get("legend"),
             value_range=tuple(value_range) if value_range else None,
         )

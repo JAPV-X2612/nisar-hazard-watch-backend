@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     exploration_deadline_seconds: float = Field(default=55.0, gt=0)
     exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)
     rate_limit_per_minute: int = Field(default=20, ge=1)
+    trusted_proxy_hops: int = Field(default=1, ge=0)
     eta_prior_seconds: float = Field(default=60.0, gt=0)
     precomputed_cases_path: str | None = None
     earthdata_token: SecretStr | None = None

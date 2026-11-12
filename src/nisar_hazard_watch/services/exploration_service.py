@@ -11,17 +11,26 @@ from nisar_hazard_watch.constants.errors import ReasonCode
 from nisar_hazard_watch.constants.explorations import (
     ACTIVE_STATUSES,
     AREA_BUCKET_KM2_STEP,
+    ETA_TIMING_KEY,
     EXPLORATION_ID_PREFIX,
+    GEOJSON_POINT,
     LIMITATIONS,
+    OBSERVED_STATUS,
+    QUALITY_MATURITY_MIXED,
+    QUALITY_WINDOW_TRUNCATED,
     SCIENTIFIC_STATUS,
     STAGE_BUDGETS_SECONDS,
     CacheState,
     ExplorationStatus,
+    GatewayErrorCode,
+    Lens,
     RunnerState,
+    ScienceStatus,
     SourceBand,
     Stage,
     StageName,
     StageState,
+    TimingKey,
 )
 from nisar_hazard_watch.constants.routes import API_PREFIX, EXPLORATIONS_PREFIX
 from nisar_hazard_watch.constants.sar import PlanStatus
@@ -66,16 +75,17 @@ from nisar_hazard_watch.utils.geometry import (
 
 logger = logging.getLogger(__name__)
 
-POINT_TYPE = "Point"
 SCIENCE_STATUS_TO_STATUS = {
-    "complete": ExplorationStatus.SUCCEEDED,
-    "partial": ExplorationStatus.PARTIAL,
-    "no_data": ExplorationStatus.NO_DATA,
+    ScienceStatus.COMPLETE.value: ExplorationStatus.SUCCEEDED,
+    ScienceStatus.PARTIAL.value: ExplorationStatus.PARTIAL,
+    ScienceStatus.NO_DATA.value: ExplorationStatus.NO_DATA,
 }
 FAILURE_DETAILS = {
-    "deadline_exceeded": "the analysis service ran out of time",
-    "job_not_found": "the analysis service lost the job",
+    GatewayErrorCode.DEADLINE_EXCEEDED.value: "the analysis service ran out of time",
+    GatewayErrorCode.JOB_NOT_FOUND.value: "the analysis service lost the job",
 }
+UNKNOWN_FAILURE_DETAIL = "the analysis could not produce a result"
+EMPTY_RESULT_DETAIL = "the analysis service reported success without a result"
 WINDOW_LIMITATION = (
     "The analysed window is limited to about 10 km around the centre of the area; cells beyond "
     "it are not measured."
@@ -138,7 +148,10 @@ class ExplorationService:
         )
         if fresh is not None:
             return await self._view(job=fresh, cache=CacheState.HIT), True
-        await self._require_capacity(request=request, scenes_total=scenes_total, bucket=bucket)
+        await self._repository.expire_overdue(now=now, error=self._timeout_error())
+        await self._require_capacity(
+            request=request, scenes_total=scenes_total, bucket=bucket, now=now
+        )
 
         ticket = await self._runner.submit(
             job=RunnerJob(lens=request.lens, plan=plan, optical_evidence=request.optical_evidence)
@@ -158,7 +171,7 @@ class ExplorationService:
             scenes_total=scenes_total,
             plan_seconds=plan_seconds,
             plan=plan,
-            timings={"etaSeconds": eta},
+            timings={ETA_TIMING_KEY: eta},
             created_at=now,
             deadline_at=now + timedelta(seconds=self._deadline_seconds),
         )
@@ -176,7 +189,7 @@ class ExplorationService:
     async def cancel(self, exploration_id: str) -> ExplorationView:
         job = await self._load(exploration_id=exploration_id)
         if job.status in ACTIVE_STATUSES:
-            job = job.model_copy(
+            cancelled = job.model_copy(
                 update={
                     "status": ExplorationStatus.CANCELLED,
                     "stage": Stage.DONE,
@@ -186,7 +199,8 @@ class ExplorationService:
                     ),
                 }
             )
-            await self._repository.update(job=job)
+            saved = await self._repository.transition(job=cancelled)
+            job = cancelled if saved else await self._load(exploration_id=exploration_id)
         return await self._view(job=job)
 
     async def layer_url(self, exploration_id: str, layer_id: str) -> str:
@@ -203,8 +217,8 @@ class ExplorationService:
         case = next(
             (
                 found.id
-                for lens in self._lenses()
-                if (found := self._cases.find(longitude, latitude, lens))
+                for lens in Lens
+                if (found := self._cases.find(longitude=longitude, latitude=latitude, lens=lens))
             ),
             None,
         )
@@ -216,14 +230,8 @@ class ExplorationService:
         )
 
     @staticmethod
-    def _lenses() -> list:
-        from nisar_hazard_watch.constants.explorations import Lens
-
-        return list(Lens)
-
-    @staticmethod
     def _aoi(geometry: dict[str, Any]) -> Aoi:
-        if isinstance(geometry, dict) and geometry.get("type") == POINT_TYPE:
+        if isinstance(geometry, dict) and geometry.get("type") == GEOJSON_POINT:
             coordinates = geometry.get("coordinates")
             if not isinstance(coordinates, list) or len(coordinates) != 2:
                 raise InvalidGeometryError("a Point needs [longitude, latitude]")
@@ -239,7 +247,7 @@ class ExplorationService:
             return await self._planner.plan(aoi=aoi)
         except CatalogUnavailableError as exc:
             longitude, latitude = aoi_center(aoi=aoi)
-            case = self._cases.find(longitude, latitude, request.lens)
+            case = self._cases.find(longitude=longitude, latitude=latitude, lens=request.lens)
             if case is None:
                 raise
             raise CatalogUnavailableError(
@@ -247,9 +255,9 @@ class ExplorationService:
             ) from exc
 
     async def _require_capacity(
-        self, request: ExplorationRequest, scenes_total: int, bucket: str
+        self, request: ExplorationRequest, scenes_total: int, bucket: str, now: datetime
     ) -> None:
-        active = await self._repository.count_active()
+        active = await self._repository.count_active(now=now)
         if active >= self._max_active:
             eta = await self._eta.estimate(
                 lens=request.lens, scenes_total=scenes_total, area_bucket=bucket
@@ -300,7 +308,7 @@ class ExplorationService:
         assert job.runner_id is not None
         try:
             ticket = await self._runner.poll(run_id=job.runner_id)
-        except RunnerUnavailableError:
+        except (RunnerUnavailableError, QueueFullError):
             logger.warning("polling %s failed; keeping its last state", job.id, exc_info=True)
             ticket = None
         updated = self._apply(job=job, ticket=ticket, now=now) if ticket else job
@@ -310,18 +318,23 @@ class ExplorationService:
                     "status": ExplorationStatus.PARTIAL,
                     "stage": Stage.DONE,
                     "finished_at": now,
-                    "error": ProblemInfo(
-                        reason_code=ReasonCode.TIMEOUT_PARTIAL,
-                        detail=(
-                            f"the analysis did not finish within {self._deadline_seconds:.0f} s; "
-                            "the planned scenes are listed"
-                        ),
-                    ),
+                    "error": self._timeout_error(),
                 }
             )
-        if updated != job:
-            await self._repository.update(job=updated)
-        return updated
+        if updated == job:
+            return job
+        if await self._repository.transition(job=updated):
+            return updated
+        return await self._load(exploration_id=job.id)
+
+    def _timeout_error(self) -> ProblemInfo:
+        return ProblemInfo(
+            reason_code=ReasonCode.TIMEOUT_PARTIAL,
+            detail=(
+                f"the analysis did not finish within {self._deadline_seconds:.0f} s; "
+                "the planned scenes are listed"
+            ),
+        )
 
     def _apply(self, job: ExplorationJob, ticket: RunnerTicket, now: datetime) -> ExplorationJob:
         update: dict[str, Any] = {"runner_id": ticket.run_id}
@@ -330,23 +343,35 @@ class ExplorationService:
         elif ticket.state is RunnerState.RUNNING:
             update.update(status=ExplorationStatus.RUNNING, stage=Stage.PROCESSING)
         elif ticket.state is RunnerState.FAILED:
-            code = ticket.error_code or "worker_failed"
-            detail = FAILURE_DETAILS.get(code, "the analysis could not produce a result")
+            code = ticket.error_code or GatewayErrorCode.WORKER_FAILED.value
             update.update(
-                status=ExplorationStatus.FAILED,
-                stage=Stage.DONE,
-                finished_at=now,
-                error=ProblemInfo(reason_code=ReasonCode.ANALYSIS_FAILED, detail=detail),
+                self._failed(detail=FAILURE_DETAILS.get(code, UNKNOWN_FAILURE_DETAIL), now=now)
             )
         elif ticket.result is not None:
             update.update(self._succeeded(job=job, result=ticket.result, now=now))
+        else:
+            update.update(self._failed(detail=EMPTY_RESULT_DETAIL, now=now))
         return job.model_copy(update=update)
+
+    @staticmethod
+    def _failed(detail: str, now: datetime) -> dict[str, Any]:
+        return {
+            "status": ExplorationStatus.FAILED,
+            "stage": Stage.DONE,
+            "finished_at": now,
+            "error": ProblemInfo(reason_code=ReasonCode.ANALYSIS_FAILED, detail=detail),
+        }
 
     def _succeeded(
         self, job: ExplorationJob, result: RunnerResult, now: datetime
     ) -> dict[str, Any]:
         assert job.plan is not None
-        status = SCIENCE_STATUS_TO_STATUS.get(result.science_status, ExplorationStatus.FAILED)
+        status = SCIENCE_STATUS_TO_STATUS.get(result.science_status)
+        if status is None:
+            return self._failed(
+                detail=f"the analysis service returned an unknown status {result.science_status!r}",
+                now=now,
+            )
         _, truncated = window_pixels(aoi=job.plan.aoi)
         layers = [
             Layer(
@@ -372,8 +397,8 @@ class ExplorationService:
             layers=layers,
             quality={
                 **result.quality,
-                "maturityMixed": job.plan.maturity_mixed,
-                "windowTruncated": truncated,
+                QUALITY_MATURITY_MIXED: job.plan.maturity_mixed,
+                QUALITY_WINDOW_TRUNCATED: truncated,
             },
             limitations=[*LIMITATIONS, *([WINDOW_LIMITATION] if truncated else [])],
             scientific_status=SCIENTIFIC_STATUS,
@@ -402,7 +427,7 @@ class ExplorationService:
         end = job.finished_at or now
         elapsed = max(0.0, (end - job.created_at).total_seconds())
         active = job.status in ACTIVE_STATUSES
-        eta = job.timings.get("etaSeconds")
+        eta = job.timings.get(ETA_TIMING_KEY)
         return ExplorationView(
             id=job.id,
             status=job.status,
@@ -433,8 +458,9 @@ class ExplorationService:
             stages.append(StageTiming(name=StageName.PROCESSING, state=StageState.RUNNING))
         elif job.result is not None:
             timings = job.result.timings
-            reading, analysing = timings.get("prefetch_s"), timings.get("measure_s")
-            rendering = timings.get("render_s")
+            reading = timings.get(TimingKey.PREFETCH.value)
+            analysing = timings.get(TimingKey.MEASURE.value)
+            rendering = timings.get(TimingKey.RENDER.value)
             for name, seconds in (
                 (StageName.READING, reading),
                 (StageName.ANALYSING, analysing),
@@ -454,7 +480,7 @@ class ExplorationService:
     def _progress(job: ExplorationJob) -> Progress:
         read = None
         if job.result is not None:
-            read = sum(1 for row in job.result.observations if row.get("status") == "observed")
+            read = sum(1 for row in job.result.observations if row.get("status") == OBSERVED_STATUS)
         return Progress(scenes_read=read, scenes_total=job.scenes_total)
 
     @staticmethod

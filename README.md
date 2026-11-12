@@ -34,7 +34,8 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `MAX_ACTIVE_EXPLORATIONS` | `5` | Explorations running at once; more get `503 QUEUE_FULL` |
 | `EXPLORATION_DEADLINE_SECONDS` | `55` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL` |
 | `EXPLORATION_CACHE_TTL_SECONDS` | `86400` | A finished exploration with the same lens, area and scenes is reused for this long |
-| `RATE_LIMIT_PER_MINUTE` | `20` | Requests per client (left-most `X-Forwarded-For`, else socket peer) to the exploration and coverage endpoints |
+| `RATE_LIMIT_PER_MINUTE` | `20` | Requests per client to the exploration and coverage endpoints |
+| `TRUSTED_PROXY_HOPS` | `1` | Proxies in front of the API that append to `X-Forwarded-For` (Railway: 1; add one for another proxy such as a Vercel rewrite). The client is that many entries from the right, so a spoofed leading address cannot dodge the limit; `0` ignores the header and uses the socket peer |
 | `ETA_PRIOR_SECONDS` | `60` | ETA until three comparable runs exist; then the p80 of the last 50 |
 | `ASF_TIMEOUT_SECONDS`, `GATEWAY_TIMEOUT_SECONDS` | `30`, `20` | HTTP timeouts towards the ASF catalog and the ML gateway (> 0) |
 | `PRECOMPUTED_CASES_PATH` | unset | JSON list of precomputed cases offered when the catalog is down |

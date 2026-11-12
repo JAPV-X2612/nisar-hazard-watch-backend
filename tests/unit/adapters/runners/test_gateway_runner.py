@@ -14,6 +14,7 @@ from tests.factories import make_plan, make_scene, make_series
 FIXTURE = Path(__file__).parents[3] / "fixtures" / "ml_gateway_job.json"
 BASE_URL = "https://gateway.example.test"
 RUN_ID = "669a471d5c234a7b838d41715ff519fc"
+FOREIGN_LAYER_URL = "https://evil.example.test/layer.png"
 
 
 def _fixture() -> dict:
@@ -199,3 +200,91 @@ async def test_a_network_failure_is_an_unavailable_analysis_service() -> None:
     # Act / Assert
     with pytest.raises(expected_exception=RunnerUnavailableError):
         await _run(unreachable, lambda runner: runner.poll(run_id=RUN_ID))
+
+
+async def test_an_unknown_job_on_submit_is_an_unavailable_service_not_a_lost_job() -> None:
+    # Arrange
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=404, json={"detail": "Not Found"})
+
+    # Act / Assert
+    with pytest.raises(expected_exception=RunnerUnavailableError):
+        await _run(handler, lambda runner: runner.submit(job=_job()))
+
+
+async def test_a_lost_job_keeps_the_id_it_was_polled_with() -> None:
+    # Arrange
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=404, content=b"<html>Not Found</html>")
+
+    # Act
+    ticket = await _run(handler, lambda runner: runner.poll(run_id=RUN_ID))
+
+    # Assert
+    assert ticket.run_id == RUN_ID
+    assert ticket.state is RunnerState.FAILED
+    assert ticket.error_code == "job_not_found"
+
+
+async def test_the_run_id_is_encoded_into_a_single_path_segment() -> None:
+    # Arrange
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(status_code=200, json={"job_id": RUN_ID, "status": "queued"})
+
+    # Act
+    await _run(handler, lambda runner: runner.poll(run_id="../admin?x=1"))
+
+    # Assert
+    assert sent[0].url.raw_path == b"/v2/jobs/..%2Fadmin%3Fx%3D1"
+
+
+@pytest.mark.parametrize(
+    argnames="body",
+    argvalues=[
+        [{"status": "succeeded"}],
+        {"job_id": RUN_ID, "status": "teleported"},
+        {"job_id": RUN_ID, "status": ["queued"]},
+        {"job_id": RUN_ID, "status": "succeeded", "result": {"layers": [{"id": "display_x"}]}},
+        {"job_id": RUN_ID, "status": "succeeded", "result": {"elapsed_seconds": "soon"}},
+    ],
+    ids=[
+        "not-an-object",
+        "unknown-status",
+        "unhashable-status",
+        "layer-without-bounds",
+        "bad-number",
+    ],
+)
+async def test_a_malformed_answer_is_an_unavailable_service_never_a_crash(body: object) -> None:
+    # Arrange
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=200, json=body)
+
+    # Act / Assert
+    with pytest.raises(expected_exception=RunnerUnavailableError):
+        await _run(handler, lambda runner: runner.poll(run_id=RUN_ID))
+
+
+@pytest.mark.parametrize(
+    argnames="png_url",
+    argvalues=[
+        FOREIGN_LAYER_URL,
+        "//evil.example.test/layer.png",
+        "http://gateway.example.test/x.png",
+    ],
+    ids=["other-host", "scheme-relative-other-host", "other-scheme"],
+)
+async def test_a_layer_served_from_another_origin_is_never_trusted(png_url: str) -> None:
+    # Arrange
+    payload = _fixture()
+    payload["result"]["layers"][0]["png_url"] = png_url
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=200, json=payload)
+
+    # Act / Assert
+    with pytest.raises(expected_exception=RunnerUnavailableError):
+        await _run(handler, lambda runner: runner.poll(run_id=RUN_ID))

@@ -2,7 +2,7 @@ import itertools
 import time
 from collections.abc import Callable
 
-from nisar_hazard_watch.constants.explorations import RunnerState
+from nisar_hazard_watch.constants.explorations import OBSERVED_STATUS, LayerKind, RunnerState
 from nisar_hazard_watch.ports.analysis_runner import (
     RunnerJob,
     RunnerLayer,
@@ -48,7 +48,7 @@ class InProcessRunner:
             science_status="complete",
             lens={"status": "evaluated", "synthetic": True},
             observations=[
-                {"date": f"{scene.acquired_at:%Y-%m-%d}", "status": "observed"}
+                {"date": f"{scene.acquired_at:%Y-%m-%d}", "status": OBSERVED_STATUS}
                 for scene in job.plan.scenes
             ],
             aoi_summary=None,
@@ -56,7 +56,7 @@ class InProcessRunner:
                 RunnerLayer(
                     id="display_synthetic",
                     title="synthetic",
-                    kind="observed",
+                    kind=LayerKind.OBSERVED.value,
                     units="dB",
                     colormap="gray",
                     bounds=(west, south, east, north),

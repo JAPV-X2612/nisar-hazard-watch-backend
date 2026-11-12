@@ -44,6 +44,7 @@ SMALL_POLYGON = {
     ],
 }
 Factory = Callable[..., ExplorationService]
+UNKNOWN_SCIENCE_STATUS = "mystery"
 
 
 def _request(**overrides: object) -> ExplorationRequest:
@@ -383,19 +384,102 @@ async def test_a_partial_science_result_stays_available(
     assert done.result is not None
 
 
+@pytest.mark.parametrize(
+    argnames="failure",
+    argvalues=[RunnerUnavailableError("down"), QueueFullError("busy")],
+    ids=["unavailable", "at-capacity"],
+)
 async def test_a_polling_hiccup_keeps_the_last_known_state(
-    make_service: Factory, runner: ScriptedRunner
+    make_service: Factory, runner: ScriptedRunner, failure: Exception
 ) -> None:
     # Arrange
     service = make_service()
     view, _ = await service.create(request=_request())
-    runner.poll_ticket = RunnerUnavailableError("down")
+    runner.poll_ticket = failure
 
     # Act
     still = await service.get(exploration_id=view.id)
 
     # Assert
     assert still.status is ExplorationStatus.RUNNING
+
+
+async def test_an_unknown_science_status_is_a_failure_not_a_success(
+    make_service: Factory, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service()
+    view, _ = await service.create(request=_request())
+    _succeeded(runner, science_status=UNKNOWN_SCIENCE_STATUS)
+
+    # Act
+    done = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert done.status is ExplorationStatus.FAILED
+    assert done.result is None
+    assert done.error is not None
+    assert done.error.reason_code is ReasonCode.ANALYSIS_FAILED
+    assert repr(UNKNOWN_SCIENCE_STATUS) in done.error.detail
+
+
+async def test_a_success_without_a_result_is_a_failure(
+    make_service: Factory, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service()
+    view, _ = await service.create(request=_request())
+    runner.poll_ticket = RunnerTicket(run_id="run-1", state=RunnerState.SUCCEEDED, result=None)
+
+    # Act
+    done = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert done.status is ExplorationStatus.FAILED
+    assert done.error is not None
+    assert done.error.reason_code is ReasonCode.ANALYSIS_FAILED
+
+
+async def test_a_result_arriving_after_a_cancellation_never_overwrites_it(
+    make_service: Factory, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service()
+    view, _ = await service.create(request=_request())
+    _succeeded(runner)
+
+    async def cancel_meanwhile() -> None:
+        await service.cancel(exploration_id=view.id)
+
+    runner.while_polling = cancel_meanwhile
+
+    # Act
+    answered = await service.get(exploration_id=view.id)
+    stored = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert answered.status is ExplorationStatus.CANCELLED
+    assert answered.result is None
+    assert stored.status is ExplorationStatus.CANCELLED
+
+
+async def test_an_overdue_run_stops_holding_a_slot_of_the_queue(
+    make_service: Factory, clock: ManualClock
+) -> None:
+    # Arrange
+    service = make_service(max_active=1)
+    first, _ = await service.create(request=_request())
+    clock.advance(DEADLINE_SECONDS + 1)
+
+    # Act
+    second, _ = await service.create(request=_request(lens=Lens.AGRICULTURE))
+    expired = await service.get(exploration_id=first.id)
+
+    # Assert
+    assert second.status is ExplorationStatus.RUNNING
+    assert expired.status is ExplorationStatus.PARTIAL
+    assert expired.error is not None
+    assert expired.error.reason_code is ReasonCode.TIMEOUT_PARTIAL
 
 
 async def test_an_active_exploration_can_be_cancelled_and_a_finished_one_cannot(

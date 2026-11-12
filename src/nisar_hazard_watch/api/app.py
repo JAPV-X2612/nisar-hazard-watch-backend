@@ -65,6 +65,7 @@ def create_app(
                 app.state.rate_limiter = RateLimiter(
                     max_requests=settings.rate_limit_per_minute, window_seconds=RATE_WINDOW_SECONDS
                 )
+                app.state.trusted_proxy_hops = settings.trusted_proxy_hops
                 logger.info(
                     "starting %s %s environment=%s cors_origins=%s",
                     settings.service_name,

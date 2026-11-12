@@ -1,14 +1,21 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from nisar_hazard_watch.adapters.db.models import ExplorationRecord
-from nisar_hazard_watch.constants.explorations import ACTIVE_STATUSES, ExplorationStatus, Lens
+from nisar_hazard_watch.constants.explorations import (
+    ACTIVE_STATUSES,
+    ExplorationStatus,
+    Lens,
+    Stage,
+)
+from nisar_hazard_watch.models.exploration import ProblemInfo
 from nisar_hazard_watch.ports.job_repository import ExplorationJob
 
 DATETIME_FIELDS = ("created_at", "finished_at", "deadline_at")
+_ACTIVE = [status.value for status in ACTIVE_STATUSES]
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -17,11 +24,15 @@ def _aware(value: datetime | None) -> datetime | None:
     return value
 
 
-def _to_record(job: ExplorationJob) -> ExplorationRecord:
+def _to_values(job: ExplorationJob) -> dict[str, Any]:
     values: dict[str, Any] = job.model_dump(mode="json", by_alias=False)
     for field in DATETIME_FIELDS:
         values[field] = getattr(job, field)
-    return ExplorationRecord(**values)
+    return values
+
+
+def _to_record(job: ExplorationJob) -> ExplorationRecord:
+    return ExplorationRecord(**_to_values(job))
 
 
 def _to_job(record: ExplorationRecord) -> ExplorationJob:
@@ -44,13 +55,37 @@ class SqlJobRepository:
             record = await session.get(ExplorationRecord, job_id)
             return _to_job(record) if record else None
 
-    async def update(self, job: ExplorationJob) -> None:
+    async def transition(self, job: ExplorationJob) -> bool:
+        values = _to_values(job)
+        values.pop("id")
+        statement = (
+            update(ExplorationRecord)
+            .where(ExplorationRecord.id == job.id, ExplorationRecord.status.in_(_ACTIVE))
+            .values(**values)
+        )
         async with self._session_factory() as session, session.begin():
-            await session.merge(_to_record(job))
+            result = cast(CursorResult[Any], await session.execute(statement))
+        return result.rowcount > 0
 
-    async def count_active(self) -> int:
-        active = [status.value for status in ACTIVE_STATUSES]
-        statement = select(func.count()).where(ExplorationRecord.status.in_(active))
+    async def expire_overdue(self, now: datetime, error: ProblemInfo) -> int:
+        statement = (
+            update(ExplorationRecord)
+            .where(ExplorationRecord.status.in_(_ACTIVE), ExplorationRecord.deadline_at <= now)
+            .values(
+                status=ExplorationStatus.PARTIAL.value,
+                stage=Stage.DONE.value,
+                finished_at=now,
+                error=error.model_dump(mode="json"),
+            )
+        )
+        async with self._session_factory() as session, session.begin():
+            result = cast(CursorResult[Any], await session.execute(statement))
+        return result.rowcount
+
+    async def count_active(self, now: datetime) -> int:
+        statement = select(func.count()).where(
+            ExplorationRecord.status.in_(_ACTIVE), ExplorationRecord.deadline_at > now
+        )
         async with self._session_factory() as session:
             return int((await session.execute(statement)).scalar_one())
 

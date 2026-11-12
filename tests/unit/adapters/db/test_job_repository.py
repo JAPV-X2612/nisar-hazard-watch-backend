@@ -14,7 +14,8 @@ from tests.factories import make_job
 
 NOW = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
 CACHE_KEY = "b" * 64
-PLAN_TIMEOUT_DETAIL = "late"
+TIMEOUT_ERROR = ProblemInfo(reason_code=ReasonCode.TIMEOUT_PARTIAL, detail="late")
+ACTIVE_JOBS = 2
 
 
 @pytest.fixture
@@ -58,7 +59,9 @@ async def test_an_unknown_job_is_none(repository: SqlJobRepository) -> None:
     assert loaded is None
 
 
-async def test_updating_a_job_replaces_its_state(repository: SqlJobRepository) -> None:
+async def test_a_transition_replaces_the_state_of_an_active_job(
+    repository: SqlJobRepository,
+) -> None:
     # Arrange
     job = make_job()
     await repository.add(job=job)
@@ -72,14 +75,39 @@ async def test_updating_a_job_replaces_its_state(repository: SqlJobRepository) -
     )
 
     # Act
-    await repository.update(job=failed)
+    saved = await repository.transition(job=failed)
     loaded = await repository.get(job_id=job.id)
 
     # Assert
+    assert saved is True
     assert loaded is not None
     assert loaded.status is ExplorationStatus.FAILED
     assert loaded.error is not None
     assert loaded.error.reason_code is ReasonCode.ANALYSIS_FAILED
+
+
+async def test_a_transition_never_overwrites_a_finished_job(
+    repository: SqlJobRepository,
+) -> None:
+    # Arrange
+    job = make_job()
+    await repository.add(job=job)
+    cancelled = job.model_copy(
+        update={"status": ExplorationStatus.CANCELLED, "stage": Stage.DONE, "finished_at": NOW}
+    )
+    succeeded = job.model_copy(
+        update={"status": ExplorationStatus.SUCCEEDED, "stage": Stage.DONE, "finished_at": NOW}
+    )
+    await repository.transition(job=cancelled)
+
+    # Act
+    saved = await repository.transition(job=succeeded)
+    loaded = await repository.get(job_id=job.id)
+
+    # Assert
+    assert saved is False
+    assert loaded is not None
+    assert loaded.status is ExplorationStatus.CANCELLED
 
 
 async def test_only_queued_and_running_jobs_count_as_active(repository: SqlJobRepository) -> None:
@@ -95,10 +123,55 @@ async def test_only_queued_and_running_jobs_count_as_active(repository: SqlJobRe
         await repository.add(job=make_job(id=f"exp_{index:016d}", status=status))
 
     # Act
-    active = await repository.count_active()
+    active = await repository.count_active(now=NOW)
 
     # Assert
-    assert active == 2
+    assert active == ACTIVE_JOBS
+
+
+async def test_overdue_jobs_do_not_count_as_active(repository: SqlJobRepository) -> None:
+    # Arrange
+    await repository.add(job=make_job(id="exp_alive", deadline_at=NOW + timedelta(seconds=5)))
+    await repository.add(job=make_job(id="exp_late", deadline_at=NOW - timedelta(seconds=5)))
+
+    # Act
+    active = await repository.count_active(now=NOW)
+
+    # Assert
+    assert active == 1
+
+
+async def test_expiring_overdue_jobs_marks_only_those_as_partial(
+    repository: SqlJobRepository,
+) -> None:
+    # Arrange
+    await repository.add(job=make_job(id="exp_alive", deadline_at=NOW + timedelta(seconds=5)))
+    await repository.add(job=make_job(id="exp_late", deadline_at=NOW - timedelta(seconds=5)))
+    await repository.add(
+        job=make_job(
+            id="exp_done",
+            status=ExplorationStatus.SUCCEEDED,
+            deadline_at=NOW - timedelta(seconds=5),
+        )
+    )
+
+    # Act
+    expired = await repository.expire_overdue(now=NOW, error=TIMEOUT_ERROR)
+    late = await repository.get(job_id="exp_late")
+    alive = await repository.get(job_id="exp_alive")
+    done = await repository.get(job_id="exp_done")
+
+    # Assert
+    assert expired == 1
+    assert late is not None
+    assert late.status is ExplorationStatus.PARTIAL
+    assert late.stage is Stage.DONE
+    assert late.finished_at == NOW
+    assert late.error == TIMEOUT_ERROR
+    assert alive is not None
+    assert alive.status is ExplorationStatus.QUEUED
+    assert done is not None
+    assert done.status is ExplorationStatus.SUCCEEDED
 
 
 async def test_find_fresh_returns_the_newest_succeeded_job_of_that_key(

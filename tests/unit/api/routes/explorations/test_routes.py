@@ -26,6 +26,7 @@ HUGE_POLYGON = {
 BODY = {"lens": "flood_wetland", "geometry": POINT}
 URL = "/api/v1/explorations"
 LONG_RUN_SECONDS = 10_000
+FORWARDED_FOR = "X-Forwarded-For"
 
 
 def _asf_catalog(status: int = 200, features: list | None = None) -> httpx.MockTransport:
@@ -228,8 +229,8 @@ def test_each_client_is_limited_on_its_own_and_gets_a_429(
 ) -> None:
     # Arrange
     client = start_api(rate_limit_per_minute=2)
-    first_client = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
-    other_client = {"X-Forwarded-For": "198.51.100.9"}
+    first_client = {FORWARDED_FOR: "203.0.113.7"}
+    other_client = {FORWARDED_FOR: "198.51.100.9"}
 
     # Act
     allowed = [client.post(url=URL, json=BODY, headers=first_client).status_code for _ in range(2)]
@@ -241,6 +242,38 @@ def test_each_client_is_limited_on_its_own_and_gets_a_429(
     assert limited.status_code == 429
     assert limited.json()["reasonCode"] == ReasonCode.RATE_LIMITED
     assert other.status_code == 200
+
+
+def test_a_spoofed_leading_forwarded_address_does_not_dodge_the_limit(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    client = start_api(rate_limit_per_minute=1)
+    first = {FORWARDED_FOR: "192.0.2.1, 203.0.113.7"}
+    second = {FORWARDED_FOR: "192.0.2.2, 203.0.113.7"}
+
+    # Act
+    allowed = client.post(url=URL, json=BODY, headers=first)
+    limited = client.post(url=URL, json=BODY, headers=second)
+
+    # Assert
+    assert allowed.status_code == 200
+    assert limited.status_code == 429
+
+
+def test_without_trusted_proxies_the_forwarded_header_is_ignored(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    client = start_api(rate_limit_per_minute=1, trusted_proxy_hops=0)
+
+    # Act
+    allowed = client.post(url=URL, json=BODY, headers={FORWARDED_FOR: "203.0.113.7"})
+    limited = client.post(url=URL, json=BODY, headers={FORWARDED_FOR: "198.51.100.9"})
+
+    # Assert
+    assert allowed.status_code == 200
+    assert limited.status_code == 429
 
 
 def test_an_oversized_body_is_refused_before_it_is_read(

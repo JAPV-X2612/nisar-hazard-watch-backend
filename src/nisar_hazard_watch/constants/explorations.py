@@ -67,6 +67,50 @@ class RunnerState(StrEnum):
     FAILED = "failed"
 
 
+class TimingKey(StrEnum):
+    PREFETCH = "prefetch_s"
+    MEASURE = "measure_s"
+    RENDER = "render_s"
+    ELAPSED = "elapsed_s"
+    TOTAL = "total_s"
+
+
+class ScienceStatus(StrEnum):
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    NO_DATA = "no_data"
+
+
+class LayerKind(StrEnum):
+    CHANGE = "change"
+    DIAGNOSTIC = "diagnostic"
+    OBSERVED = "observed"
+    GENERIC = "layer"
+
+
+class GatewayStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class GatewayCache(StrEnum):
+    HIT = "hit"
+
+
+class GatewayErrorCode(StrEnum):
+    JOB_NOT_FOUND = "job_not_found"
+    DEADLINE_EXCEEDED = "deadline_exceeded"
+    WORKER_FAILED = "worker_failed"
+
+
+GATEWAY_OPERATION = "explore"
+OBSERVED_STATUS = "observed"
+GEOJSON_POINT = "Point"
+ETA_TIMING_KEY = "etaSeconds"
+QUALITY_MATURITY_MIXED = "maturityMixed"
+QUALITY_WINDOW_TRUNCATED = "windowTruncated"
 EXPLORATION_ID_PREFIX = "exp_"
 BODY_LIMIT_BYTES = 16 * 1024
 SCIENTIFIC_STATUS = "diagnostic"
