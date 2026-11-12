@@ -41,7 +41,7 @@ def test_a_provisional_product_is_parsed_from_its_name_and_url() -> None:
     assert scene.acquired_at == datetime(2026, 10, 10, 2, 0, 0, tzinfo=UTC)
     assert (scene.cycle, scene.track, scene.frame) == (33, 63, 70)
     assert scene.direction is Direction.ASCENDING
-    assert scene.mode == "DHDH"
+    assert (scene.code, scene.mode) == ("2005", "DHDH")
     assert scene.polarizations == ["HH", "HV"]
     assert scene.configuration is Configuration.PRODUCTION
     assert scene.maturity is Maturity.PROVISIONAL

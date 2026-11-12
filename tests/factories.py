@@ -26,6 +26,7 @@ def make_scene(**overrides: Any) -> Scene:
         "track": track,
         "direction": direction,
         "frame": frame,
+        "code": "4005",
         "mode": "DHDH",
         "polarizations": ["HH", "HV"],
         "maturity": Maturity.PROVISIONAL,

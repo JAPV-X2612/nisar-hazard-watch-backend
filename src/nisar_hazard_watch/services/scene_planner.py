@@ -58,8 +58,8 @@ class ScenePlanner:
         members = [
             scene
             for scene in scenes
-            if (scene.track, scene.direction, scene.frame)
-            == (group.track, group.direction, group.frame)
+            if (scene.track, scene.direction, scene.frame, scene.code, scene.mode)
+            == (group.track, group.direction, group.frame, group.code, group.mode)
         ]
         selected = select_dates(
             scenes=members,

@@ -31,4 +31,5 @@ async def test_the_real_asf_catalog_yields_a_ready_plan_for_qadirabad() -> None:
     assert len(plan.scenes) <= MAX_IMAGES
     assert datetime.now(UTC) - dates[-1] < timedelta(days=MAX_AGE_DAYS)
     assert all(24 <= gap <= 36 for gap in gaps)
-    assert len({(scene.track, scene.direction, scene.frame) for scene in plan.scenes}) == 1
+    assert plan.group is not None
+    assert len({scene.mode + scene.code for scene in plan.scenes}) == 1

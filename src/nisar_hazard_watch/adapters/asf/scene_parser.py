@@ -35,6 +35,7 @@ def parse_scene_identity(scene_name: str, url: str) -> SceneIdentity | None:
         track=int(match["track"]),
         direction=Direction(match["direction"]),
         frame=int(match["frame"]),
+        code=match["code"],
         mode=mode,
         polarizations=list(POLARIZATIONS_BY_MODE.get(mode[:FREQUENCY_A_MODE_LENGTH], [])),
         maturity=maturity,

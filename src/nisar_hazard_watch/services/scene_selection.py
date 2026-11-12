@@ -4,18 +4,17 @@ from statistics import mean
 
 from nisar_hazard_watch.constants.sar import (
     CONFIGURATION_RANK,
-    FREQUENCY_A_MODE_LENGTH,
     FULL_COVERAGE,
     MATURITY_RANK,
     Direction,
 )
 from nisar_hazard_watch.models.scene import Scene, SceneGroup
 
-GroupKey = tuple[int, str, int]
+GroupKey = tuple[int, str, int, str, str]
 
 
 def _group_key(scene: Scene) -> GroupKey:
-    return scene.track, scene.direction.value, scene.frame
+    return scene.track, scene.direction.value, scene.frame, scene.code, scene.mode
 
 
 def dedupe_scenes(scenes: list[Scene]) -> list[Scene]:
@@ -39,32 +38,31 @@ def _rank(scene: Scene) -> tuple:
 
 
 def choose_group(scenes: list[Scene]) -> SceneGroup | None:
-    """Group by (track, direction, frame): full coverage, then dual-pol, dates, newest, numbers."""
+    """Series of one grid: full coverage, then dual-pol, most dates, newest, smallest key."""
     groups: dict[GroupKey, list[Scene]] = defaultdict(list)
     for scene in scenes:
         groups[_group_key(scene=scene)].append(scene)
     if not groups:
         return None
-    best_key = max(groups, key=lambda key: _group_score(key=key, members=groups[key]))
-    track, direction, frame = best_key
-    return SceneGroup(track=track, direction=Direction(direction), frame=frame)
+    scores = {key: _group_score(members=members) for key, members in groups.items()}
+    best_score = max(scores.values())
+    track, direction, frame, code, mode = min(
+        key for key, score in scores.items() if score == best_score
+    )
+    return SceneGroup(
+        track=track, direction=Direction(direction), frame=frame, code=code, mode=mode
+    )
 
 
-def _group_score(key: GroupKey, members: list[Scene]) -> tuple:
-    track, direction, frame = key
+def _group_score(members: list[Scene]) -> tuple:
     coverage = mean(scene.coverage for scene in members)
     full = coverage >= FULL_COVERAGE
-    newest = max(members, key=lambda scene: scene.acquired_at)
-    family = newest.mode[:FREQUENCY_A_MODE_LENGTH]
     return (
         full,
         0.0 if full else coverage,
         any(len(scene.polarizations) >= 2 for scene in members),
-        len({s.acquired_at for s in members if s.mode[:FREQUENCY_A_MODE_LENGTH] == family}),
+        len({scene.acquired_at for scene in members}),
         max(scene.acquired_at for scene in members),
-        -track,
-        -ord(direction),
-        -frame,
     )
 
 
@@ -75,9 +73,7 @@ def select_dates(
     if not scenes:
         return []
     ordered = sorted(scenes, key=lambda scene: scene.acquired_at)
-    target = ordered[-1]
-    family = target.mode[:FREQUENCY_A_MODE_LENGTH]
-    pool = [scene for scene in ordered[:-1] if scene.mode[:FREQUENCY_A_MODE_LENGTH] == family]
+    target, pool = ordered[-1], ordered[:-1]
     tolerance = timedelta(days=tolerance_days)
     selected = [target]
     for step in range(1, max_images):

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from nisar_hazard_watch.constants.sar import Configuration, Direction, Maturity, PlanStatus
 from nisar_hazard_watch.models.base_model import CamelModel
@@ -14,6 +14,7 @@ class SceneIdentity(CamelModel):
     track: int
     direction: Direction
     frame: int
+    code: str
     mode: str
     polarizations: list[str]
     maturity: Maturity
@@ -31,6 +32,14 @@ class SceneGroup(CamelModel):
     track: int
     direction: Direction
     frame: int
+    code: str
+    mode: str
+
+    @computed_field
+    @property
+    def series_key(self) -> str:
+        """Same identity the ML service uses: scenes of one key share a grid and can be stacked."""
+        return f"{self.track:03d}_{self.direction.value}_{self.frame:03d}_{self.code}_{self.mode}"
 
 
 class ScenePlan(CamelModel):

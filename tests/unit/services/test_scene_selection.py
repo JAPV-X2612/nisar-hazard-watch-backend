@@ -155,23 +155,6 @@ def test_dates_end_on_the_newest_acquisition_and_walk_back_about_a_month() -> No
     )
 
 
-def test_only_scenes_of_the_target_mode_family_are_mixed() -> None:
-    # Arrange
-    scenes = make_series(count=12)
-    scenes[8] = make_scene(acquired_at=scenes[8].acquired_at, mode="SHSH", polarizations=["HH"])
-
-    # Act
-    selected = select_dates(
-        scenes=scenes,
-        max_images=MAX_IMAGES,
-        spacing_days=SPACING_DAYS,
-        tolerance_days=TOLERANCE_DAYS,
-    )
-
-    # Assert
-    assert {scene.mode[:2] for scene in selected} == {"DH"}
-
-
 def test_a_gap_in_the_archive_gives_fewer_images_instead_of_a_far_away_substitute() -> None:
     # Arrange
     series = make_series(count=12)
@@ -221,22 +204,40 @@ def test_directions_are_part_of_the_group_identity() -> None:
     assert group.direction is Direction.DESCENDING
 
 
-def test_a_group_is_scored_by_the_dates_of_its_newest_scene_mode_family() -> None:
+def test_bandwidth_codes_and_modes_of_one_frame_are_different_series() -> None:
     # Arrange
-    older_dual = make_series(count=8)
-    newest_single = [
-        make_scene(
-            acquired_at=SERIES_START + timedelta(days=12 * (8 + index)),
-            mode="SHSH",
-            polarizations=["HH"],
-        )
-        for index in range(2)
-    ]
-    steady = make_series(count=5, **OTHER_GROUP)
+    wide_band = make_series(count=4)
+    narrow_band = make_series(count=7, code="2005")
+    quad_pol = make_series(count=5, mode="QPDH", polarizations=["HH", "HV", "VH", "VV"])
 
     # Act
-    group = choose_group(scenes=[*older_dual, *newest_single, *steady])
+    group = choose_group(scenes=[*wide_band, *narrow_band, *quad_pol])
 
     # Assert
     assert group is not None
-    assert group.track == OTHER_GROUP["track"]
+    assert group.series_key == "084_A_018_2005_DHDH"
+
+
+def test_the_series_key_follows_the_ml_service_format() -> None:
+    # Arrange
+    scenes = make_series(count=4)
+
+    # Act
+    group = choose_group(scenes=scenes)
+
+    # Assert
+    assert group is not None
+    assert group.series_key == "084_A_018_4005_DHDH"
+
+
+def test_a_tie_between_series_is_resolved_by_the_smallest_key() -> None:
+    # Arrange
+    first = make_series(count=5, code="2005")
+    second = make_series(count=5, code="4005")
+
+    # Act
+    group = choose_group(scenes=[*second, *first])
+
+    # Assert
+    assert group is not None
+    assert group.code == "2005"

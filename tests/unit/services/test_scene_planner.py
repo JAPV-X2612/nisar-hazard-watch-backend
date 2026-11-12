@@ -50,7 +50,7 @@ async def test_qadirabad_is_planned_from_the_real_catalog_into_one_group_of_five
     dates = [scene.acquired_at for scene in plan.scenes]
     assert plan.status is PlanStatus.READY
     assert plan.group is not None
-    assert (plan.group.track, plan.group.frame) == (84, 18)
+    assert plan.group.series_key == "084_A_018_4005_DHDH"
     assert len(plan.scenes) == MAX_IMAGES
     assert dates == sorted(dates)
     assert dates[-1].date().isoformat() == "2026-11-11"
