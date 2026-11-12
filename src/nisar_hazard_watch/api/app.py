@@ -8,7 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from nisar_hazard_watch.adapters.db.engine import create_engine
 from nisar_hazard_watch.api.body_limit_middleware import BodyLimitMiddleware
-from nisar_hazard_watch.api.composition import build_exploration_service, build_health_service
+from nisar_hazard_watch.api.composition import (
+    build_exploration_service,
+    build_health_service,
+    build_insar_pairs_service,
+)
 from nisar_hazard_watch.api.error_handlers import register_error_handlers
 from nisar_hazard_watch.api.request_id_middleware import RequestIdMiddleware
 from nisar_hazard_watch.api.routes.router import register_routes
@@ -61,6 +65,9 @@ def create_app(
                     asf_client=asf_client,
                     gateway_client=gateway_client,
                     runner=runner,
+                )
+                app.state.insar_pairs_service = build_insar_pairs_service(
+                    settings=settings, gateway_client=gateway_client
                 )
                 app.state.rate_limiter = RateLimiter(
                     max_requests=settings.rate_limit_per_minute, window_seconds=RATE_WINDOW_SECONDS

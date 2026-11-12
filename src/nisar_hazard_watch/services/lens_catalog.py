@@ -1,4 +1,5 @@
 from nisar_hazard_watch.constants.explorations import OPTICAL_LENSES, Lens
+from nisar_hazard_watch.constants.insar import INSAR_MINIMUM_DATES
 from nisar_hazard_watch.constants.sar import MIN_IMAGES
 from nisar_hazard_watch.models.exploration import LensInfo
 
@@ -23,7 +24,13 @@ _DESCRIPTIONS = {
         "Backscatter step and population comparisons across the measured dates, descriptive of "
         "field-scale change.",
     ),
+    Lens.INSAR: (
+        "Ground motion (InSAR pair)",
+        "Coherence and wrapped phase of one NISAR L-band interferometric pair chosen from the "
+        "catalog; diagnostic only, no displacement is reported.",
+    ),
 }
+MINIMUM_DATES = {Lens.INSAR: INSAR_MINIMUM_DATES}
 
 
 def list_lenses() -> list[LensInfo]:
@@ -33,7 +40,7 @@ def list_lenses() -> list[LensInfo]:
             title=title,
             description=description,
             optical_evidence=lens in OPTICAL_LENSES,
-            minimum_dates=MIN_IMAGES,
+            minimum_dates=MINIMUM_DATES.get(lens, MIN_IMAGES),
         )
         for lens, (title, description) in _DESCRIPTIONS.items()
     ]

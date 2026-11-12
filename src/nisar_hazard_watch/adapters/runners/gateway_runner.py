@@ -7,15 +7,21 @@ import httpx
 
 from nisar_hazard_watch.constants.explorations import (
     GATEWAY_OPERATION,
+    OBSERVED_STATUS,
     GatewayCache,
     GatewayErrorCode,
     GatewayStatus,
     LayerKind,
+    Lens,
     RunnerState,
+    ScienceStatus,
     TimingKey,
 )
+from nisar_hazard_watch.constants.insar import INSAR_OPERATION, LAYER_TITLES
 from nisar_hazard_watch.constants.sar import Configuration, Maturity
 from nisar_hazard_watch.exceptions.exploration_errors import QueueFullError, RunnerUnavailableError
+from nisar_hazard_watch.exceptions.pair_errors import InvalidPairError
+from nisar_hazard_watch.models.insar_summary import InsarSummary
 from nisar_hazard_watch.models.scene import Scene
 from nisar_hazard_watch.ports.analysis_runner import (
     RunnerJob,
@@ -24,6 +30,7 @@ from nisar_hazard_watch.ports.analysis_runner import (
     RunnerTicket,
 )
 from nisar_hazard_watch.utils.geometry import aoi_center, window_pixels
+from nisar_hazard_watch.utils.gunw import pair_dates
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +54,8 @@ LAYER_KINDS = (
     ("display_flood_signature", LayerKind.DIAGNOSTIC),
     ("display_agriculture", LayerKind.DIAGNOSTIC),
     ("display_cross_pol_pattern", LayerKind.DIAGNOSTIC),
+    ("display_coherence", LayerKind.COHERENCE),
+    ("display_wrapped_phase", LayerKind.PHASE),
     ("display_optical", LayerKind.DIAGNOSTIC),
     ("display_", LayerKind.OBSERVED),
 )
@@ -66,7 +75,7 @@ def _layer_kind(layer_id: str) -> str:
 
 
 def _layer_title(layer_id: str) -> str:
-    return layer_id.removeprefix("display_").replace("_", " ")
+    return LAYER_TITLES.get(layer_id) or layer_id.removeprefix("display_").replace("_", " ")
 
 
 class GatewayRunner:
@@ -94,6 +103,16 @@ class GatewayRunner:
     def _body(self, job: RunnerJob) -> dict[str, Any]:
         aoi = job.plan.aoi
         longitude, latitude = aoi_center(aoi=aoi)
+        if job.lens is Lens.INSAR and job.pair is not None:
+            return {
+                "operation": INSAR_OPERATION,
+                "longitude": round(longitude, 5),
+                "latitude": round(latitude, 5),
+                "start_date": job.plan.window_start.date().isoformat(),
+                "end_date": job.plan.window_end.date().isoformat(),
+                "pair_id": job.pair.pair_id,
+                "coherence_threshold": job.pair.coherence_threshold,
+            }
         pixels, _ = window_pixels(aoi=aoi)
         body: dict[str, Any] = {
             "operation": GATEWAY_OPERATION,
@@ -160,6 +179,8 @@ class GatewayRunner:
         )
 
     def _result(self, result: dict[str, Any]) -> RunnerResult:
+        if result.get("operation") == INSAR_OPERATION:
+            return self._insar_result(result)
         science = result.get("science") or {}
         timings = {key: float(value) for key, value in (science.get("timings") or {}).items()}
         timings[TimingKey.ELAPSED.value] = float(result.get("elapsed_seconds", 0.0))
@@ -180,6 +201,59 @@ class GatewayRunner:
             },
             timings=timings,
         )
+
+    def _insar_result(self, result: dict[str, Any]) -> RunnerResult:
+        science = result.get("science") or {}
+        timings = {
+            TimingKey.ELAPSED.value: float(result.get("elapsed_seconds", 0.0)),
+            TimingKey.RENDER.value: float(result.get("visualization_seconds", 0.0)),
+        }
+        timings[TimingKey.MEASURE.value] = max(
+            0.0, timings[TimingKey.ELAPSED.value] - timings[TimingKey.RENDER.value]
+        )
+        grid = science.get("grid") or {}
+        spacing = grid.get("pixel_spacing_m") or [None]
+        valid = science.get("valid_pixels") or {}
+        point = science.get("point") or {}
+        status = str(result.get("science_status") or science.get("status") or "unknown")
+        measured = status in (ScienceStatus.COMPLETE.value, ScienceStatus.PARTIAL.value)
+        return RunnerResult(
+            science_status=status,
+            lens=None,
+            observations=self._pair_observations(science=science) if measured else [],
+            aoi_summary=None,
+            layers=[self._layer(layer) for layer in result.get("layers") or []],
+            quality={
+                "revision": result.get("revision"),
+                "gridWidth": grid.get("width"),
+                "gridHeight": grid.get("height"),
+                "postingMeters": spacing[0],
+            },
+            timings=timings,
+            insar=InsarSummary(
+                pair_id=str(science.get("pair_id", "")),
+                status=status,
+                reason=science.get("reason"),
+                polarization=science.get("polarization"),
+                median_coherence=science.get("median_coherence"),
+                coherence_threshold=float(science.get("coherence_threshold", 0.0)),
+                coherent_cells=valid.get("coherence"),
+                phase_cells=valid.get("wrapped_phase_rad"),
+                window_cells=(grid["width"] * grid["height"]) if measured and grid else None,
+                point_coherence=point.get("coherence"),
+                point_wrapped_phase_rad=point.get("wrapped_phase_rad"),
+                phase_reference=science.get("phase_reference"),
+                corrections_applied=list(science.get("corrections_applied") or []),
+            ),
+        )
+
+    @staticmethod
+    def _pair_observations(science: dict[str, Any]) -> list[dict[str, Any]]:
+        try:
+            days = pair_dates(pair_id=str(science["pair_id"]))
+        except (KeyError, InvalidPairError):
+            return []
+        return [{"date": day.isoformat(), "status": OBSERVED_STATUS} for day in days]
 
     def _layer_url(self, path: str) -> str:
         url = urljoin(self._base_url + "/", path)

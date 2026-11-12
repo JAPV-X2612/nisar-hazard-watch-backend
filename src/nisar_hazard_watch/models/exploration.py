@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Self
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from nisar_hazard_watch.constants.errors import ReasonCode
 from nisar_hazard_watch.constants.explorations import (
@@ -13,8 +13,15 @@ from nisar_hazard_watch.constants.explorations import (
     StageName,
     StageState,
 )
+from nisar_hazard_watch.constants.insar import (
+    DEFAULT_COHERENCE_THRESHOLD,
+    GUNW_NAME_PATTERN,
+    MAX_COHERENCE_THRESHOLD,
+    MIN_COHERENCE_THRESHOLD,
+)
 from nisar_hazard_watch.constants.sar import Configuration, Direction, Maturity, PlanStatus
 from nisar_hazard_watch.models.base_model import CamelModel
+from nisar_hazard_watch.models.insar_summary import InsarSummary
 
 
 class ExplorationRequest(CamelModel):
@@ -24,6 +31,21 @@ class ExplorationRequest(CamelModel):
     geometry: dict[str, Any]
     source: SourceBand = SourceBand.L_BAND
     optical_evidence: bool = False
+    pair_id: str | None = Field(default=None, pattern=GUNW_NAME_PATTERN)
+    coherence_threshold: float | None = Field(
+        default=None, ge=MIN_COHERENCE_THRESHOLD, le=MAX_COHERENCE_THRESHOLD, allow_inf_nan=False
+    )
+
+    @model_validator(mode="after")
+    def _pair_belongs_to_the_insar_lens(self) -> Self:
+        if self.lens is Lens.INSAR:
+            if self.pair_id is None:
+                raise ValueError("the insar lens needs a pairId from GET /api/v1/insar/pairs")
+            if self.coherence_threshold is None:
+                self.coherence_threshold = DEFAULT_COHERENCE_THRESHOLD
+        elif self.pair_id is not None or self.coherence_threshold is not None:
+            raise ValueError("pairId and coherenceThreshold apply to the insar lens only")
+        return self
 
 
 class StageTiming(CamelModel):
@@ -92,6 +114,7 @@ class ExplorationResult(CamelModel):
     scientific_status: str
     timings: dict[str, float]
     is_demo: bool = False
+    insar: InsarSummary | None = None
 
 
 class ExplorationView(CamelModel):

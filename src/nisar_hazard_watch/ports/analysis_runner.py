@@ -2,13 +2,20 @@ from typing import Any, Protocol
 
 from nisar_hazard_watch.constants.explorations import Lens, RunnerState
 from nisar_hazard_watch.models.base_model import CamelModel
+from nisar_hazard_watch.models.insar_summary import InsarSummary
 from nisar_hazard_watch.models.scene import ScenePlan
+
+
+class InsarSelection(CamelModel):
+    pair_id: str
+    coherence_threshold: float
 
 
 class RunnerJob(CamelModel):
     lens: Lens
     plan: ScenePlan
     optical_evidence: bool = False
+    pair: InsarSelection | None = None
 
 
 class RunnerLayer(CamelModel):
@@ -32,6 +39,7 @@ class RunnerResult(CamelModel):
     quality: dict[str, Any]
     timings: dict[str, float]
     is_demo: bool = False
+    insar: InsarSummary | None = None
 
 
 class RunnerTicket(CamelModel):

@@ -23,7 +23,9 @@ from nisar_hazard_watch.exceptions.exploration_errors import (
     SourceNotAvailableError,
 )
 from nisar_hazard_watch.exceptions.geometry_errors import InvalidGeometryError
+from nisar_hazard_watch.exceptions.pair_errors import InvalidPairError
 from nisar_hazard_watch.models.exploration import ExplorationRequest
+from nisar_hazard_watch.models.insar_summary import InsarSummary
 from nisar_hazard_watch.ports.analysis_runner import RunnerLayer, RunnerTicket
 from nisar_hazard_watch.ports.precomputed_cases import PrecomputedCase
 from nisar_hazard_watch.services.exploration_service import ExplorationService
@@ -593,3 +595,168 @@ async def test_coverage_describes_the_plan_without_running_anything(
     assert coverage.area_km2 == pytest.approx(104.86, abs=0.5)
     assert coverage.precomputed_case is None
     assert runner.submissions == []
+
+
+KUMAMOTO_PAIR = (
+    "NISAR_L2_PR_GUNW_026_024_A_018_028_4000_SH_20260721T202900_20260721T202934_"
+    "20260814T202858_20260814T202933_P05023_N_F_J_001"
+)
+OTHER_PAIR = KUMAMOTO_PAIR.replace(
+    "20260721T202900_20260721T202934", "20260709T202900_20260709T202935"
+)
+KUMAMOTO_POINT = {"type": "Point", "coordinates": [130.65, 32.65]}
+INSAR_LIMITATION_NO_DISPLACEMENT = "no displacement is reported"
+
+
+def _insar_request(**overrides: object) -> ExplorationRequest:
+    values: dict[str, object] = {
+        "lens": Lens.INSAR,
+        "geometry": KUMAMOTO_POINT,
+        "pair_id": KUMAMOTO_PAIR,
+        **overrides,
+    }
+    return ExplorationRequest(**values)  # type: ignore[arg-type]
+
+
+def _insar_result(runner: ScriptedRunner, **overrides: object) -> None:
+    summary = InsarSummary(
+        pair_id=KUMAMOTO_PAIR,
+        status="complete",
+        coherence_threshold=0.35,
+        median_coherence=0.43,
+        corrections_applied=[],
+    )
+    values: dict[str, object] = {
+        "lens": None,
+        "observations": [],
+        "aoi_summary": None,
+        "insar": summary,
+    }
+    _succeeded(runner, **{**values, **overrides})
+
+
+async def test_an_insar_pair_skips_the_gcov_plan_and_sends_the_pair_to_the_runner(
+    make_service: Factory, planner: FakePlanner, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service()
+
+    # Act
+    view, final = await service.create(request=_insar_request(coherence_threshold=0.5))
+
+    # Assert
+    assert final is False
+    assert planner.calls == 0
+    assert view.plan is not None
+    assert view.plan.status is PlanStatus.READY
+    assert view.progress is not None
+    assert view.progress.scenes_total == 2
+    job = runner.submissions[0]
+    assert job.pair is not None
+    assert (job.pair.pair_id, job.pair.coherence_threshold) == (KUMAMOTO_PAIR, 0.5)
+    assert job.plan.window_start.date().isoformat() == "2026-07-21"
+    assert job.plan.window_end.date().isoformat() == "2026-08-14"
+
+
+async def test_a_finished_insar_answer_carries_the_pair_summary_and_its_own_limitations(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    service = make_service()
+    view, _ = await service.create(request=_insar_request())
+    _insar_result(runner)
+    clock.advance(30)
+
+    # Act
+    done = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert done.status is ExplorationStatus.SUCCEEDED
+    assert done.result is not None
+    assert done.result.insar is not None
+    assert done.result.insar.median_coherence == 0.43
+    assert done.result.insar.los_displacement_cm is None
+    assert done.result.lens is None
+    assert done.result.scenes == []
+    assert (done.result.window_start.isoformat(), done.result.window_end.isoformat()) == (
+        "2026-07-21",
+        "2026-08-14",
+    )
+    assert any(INSAR_LIMITATION_NO_DISPLACEMENT in text for text in done.result.limitations)
+    assert not any("backscatter" in text for text in done.result.limitations)
+
+
+async def test_each_pair_and_each_threshold_is_its_own_cache_entry(
+    make_service: Factory, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service(max_active=10)
+    await service.create(request=_insar_request())
+
+    # Act
+    same, _ = await service.create(request=_insar_request())
+    other_pair, _ = await service.create(request=_insar_request(pair_id=OTHER_PAIR))
+    other_threshold, _ = await service.create(request=_insar_request(coherence_threshold=0.6))
+
+    # Assert
+    assert same.cache is CacheState.MISS
+    assert len(runner.submissions) == 4
+    assert len({same.id, other_pair.id, other_threshold.id}) == 3
+
+
+async def test_a_pair_whose_name_is_not_a_gunw_pair_is_refused_before_anything_runs(
+    make_service: Factory, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service()
+    request = _insar_request(pair_id="NISAR_L2_PR_GCOV_001_084_A_018_4005_DHDH_A_20260612T020000")
+
+    # Act / Assert
+    with pytest.raises(expected_exception=InvalidPairError):
+        await service.create(request=request)
+    assert runner.submissions == []
+
+
+async def test_an_unreadable_archive_is_a_failed_exploration_that_names_the_reason(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    service = make_service()
+    view, _ = await service.create(request=_insar_request())
+    summary = InsarSummary(
+        pair_id=KUMAMOTO_PAIR,
+        status="unavailable",
+        reason="archive_timeout",
+        coherence_threshold=0.35,
+        corrections_applied=[],
+    )
+    _insar_result(runner, science_status="unavailable", insar=summary)
+    clock.advance(30)
+
+    # Act
+    failed = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert failed.status is ExplorationStatus.FAILED
+    assert failed.error is not None
+    assert failed.error.reason_code is ReasonCode.ANALYSIS_FAILED
+    assert "timed out" in failed.error.detail
+
+
+async def test_a_pair_without_usable_coherence_is_a_no_data_answer_that_says_so(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    service = make_service()
+    view, _ = await service.create(request=_insar_request())
+    _insar_result(runner, science_status="no_data")
+    clock.advance(30)
+
+    # Act
+    done = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert done.status is ExplorationStatus.NO_DATA
+    assert done.error is not None
+    assert done.error.reason_code is ReasonCode.NO_COVERAGE
+    assert "usable coherence" in done.error.detail

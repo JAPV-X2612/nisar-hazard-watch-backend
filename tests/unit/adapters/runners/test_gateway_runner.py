@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -8,7 +9,7 @@ from nisar_hazard_watch.adapters.runners.gateway_runner import GatewayRunner
 from nisar_hazard_watch.constants.explorations import Lens, RunnerState
 from nisar_hazard_watch.constants.sar import Configuration, Maturity
 from nisar_hazard_watch.exceptions.exploration_errors import QueueFullError, RunnerUnavailableError
-from nisar_hazard_watch.ports.analysis_runner import RunnerJob
+from nisar_hazard_watch.ports.analysis_runner import InsarSelection, RunnerJob
 from tests.factories import make_plan, make_scene, make_series
 
 FIXTURE = Path(__file__).parents[3] / "fixtures" / "ml_gateway_job.json"
@@ -288,3 +289,110 @@ async def test_a_layer_served_from_another_origin_is_never_trusted(png_url: str)
     # Act / Assert
     with pytest.raises(expected_exception=RunnerUnavailableError):
         await _run(handler, lambda runner: runner.poll(run_id=RUN_ID))
+
+
+INSAR_FIXTURE = Path(__file__).parents[3] / "fixtures" / "ml_gateway_insar_pair_job.json"
+KUMAMOTO_PAIR = (
+    "NISAR_L2_PR_GUNW_026_024_A_018_028_4000_SH_20260721T202900_20260721T202934_"
+    "20260814T202858_20260814T202933_P05023_N_F_J_001"
+)
+INSAR_RUN_ID = "c8c891da8469426c8a40ba60eb9612ea"
+COHERENT_CELLS = 62500
+PHASE_CELLS = 39584
+MEDIAN_COHERENCE = 0.42586714029312134
+
+
+def _insar_job(threshold: float = 0.35) -> RunnerJob:
+    plan = make_plan(
+        scenes=[],
+        window_start=datetime(2026, 7, 21, tzinfo=UTC),
+        window_end=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    return RunnerJob(
+        lens=Lens.INSAR,
+        plan=plan,
+        pair=InsarSelection(pair_id=KUMAMOTO_PAIR, coherence_threshold=threshold),
+    )
+
+
+def _insar_answer(**science: object) -> dict:
+    answer = json.loads(INSAR_FIXTURE.read_text())
+    answer["result"]["science"] = {**answer["result"]["science"], **science}
+    return answer
+
+
+async def test_an_insar_pair_is_sent_as_the_pair_the_window_and_the_threshold() -> None:
+    # Arrange
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(status_code=202, json={"job_id": INSAR_RUN_ID, "status": "queued"})
+
+    # Act
+    await _run(handler, lambda runner: runner.submit(job=_insar_job(threshold=0.5)))
+
+    # Assert
+    body = json.loads(sent[0].content)
+    assert body["operation"] == "insar-pair"
+    assert body["pair_id"] == KUMAMOTO_PAIR
+    assert (body["start_date"], body["end_date"]) == ("2026-07-21", "2026-08-14")
+    assert body["coherence_threshold"] == 0.5
+    assert {"scenes", "lens", "aoi", "window_pixels"}.isdisjoint(body)
+
+
+async def test_a_real_insar_answer_becomes_two_layers_and_a_summary_with_no_displacement() -> None:
+    # Arrange
+    answer = json.loads(INSAR_FIXTURE.read_text())
+    handler = lambda request: httpx.Response(status_code=200, json=answer)  # noqa: E731
+
+    # Act
+    ticket = await _run(handler, lambda runner: runner.poll(run_id=INSAR_RUN_ID))
+
+    # Assert
+    assert ticket.state is RunnerState.SUCCEEDED
+    result = ticket.result
+    assert result is not None
+    assert result.science_status == "complete"
+    assert result.lens is None
+    assert [row["date"] for row in result.observations] == ["2026-07-21", "2026-08-14"]
+    assert [layer.title for layer in result.layers] == [
+        "Interferometric coherence",
+        "Wrapped phase",
+    ]
+    assert [layer.kind for layer in result.layers] == ["coherence", "phase"]
+    assert result.layers[1].colormap == "twilight"
+    assert result.layers[1].value_range == pytest.approx((-3.1415926536, 3.1415926536))
+    summary = result.insar
+    assert summary is not None
+    assert summary.pair_id == KUMAMOTO_PAIR
+    assert summary.polarization == "HH"
+    assert summary.median_coherence == MEDIAN_COHERENCE
+    assert (summary.coherent_cells, summary.phase_cells) == (COHERENT_CELLS, PHASE_CELLS)
+    assert summary.window_cells == COHERENT_CELLS
+    assert summary.point_wrapped_phase_rad is None
+    assert summary.corrections_applied == []
+    assert summary.los_displacement_cm is None
+    assert result.quality["postingMeters"] == 20.0
+    assert result.timings["measure_s"] > 0
+
+
+async def test_a_pair_the_catalog_no_longer_lists_is_a_no_data_answer_without_layers() -> None:
+    # Arrange
+    answer = _insar_answer(status="no_data", reason="pair_unavailable")
+    answer["result"]["science_status"] = "no_data"
+    answer["result"]["layers"] = []
+    answer["result"]["science"].pop("grid", None)
+    handler = lambda request: httpx.Response(status_code=200, json=answer)  # noqa: E731
+
+    # Act
+    ticket = await _run(handler, lambda runner: runner.poll(run_id=INSAR_RUN_ID))
+
+    # Assert
+    assert ticket.result is not None
+    assert ticket.result.science_status == "no_data"
+    assert ticket.result.layers == []
+    assert ticket.result.observations == []
+    assert ticket.result.insar is not None
+    assert ticket.result.insar.reason == "pair_unavailable"
+    assert ticket.result.insar.window_cells is None
