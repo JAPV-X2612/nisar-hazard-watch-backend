@@ -47,6 +47,9 @@ def build_report(records: pd.DataFrame, budget_s: float) -> str:
         summary = clean.groupby(CONFIG_COLUMNS)[SUMMARY_COLUMNS].median().round(2).reset_index()
         counts = clean.groupby(CONFIG_COLUMNS).size().rename("runs").reset_index()
         lines.append(_markdown_table(summary.merge(counts, on=CONFIG_COLUMNS)))
+        by_site = clean.groupby(["site", *CONFIG_COLUMNS])[SUMMARY_COLUMNS].median().round(2)
+        lines += ["", "## Median by site and configuration", ""]
+        lines.append(_markdown_table(by_site.reset_index()))
         lines += ["", *_budget_section(clean=clean, budget_s=budget_s)]
         lines += ["", *_prepare_section(clean=clean)]
     if not failed.empty:
@@ -85,11 +88,21 @@ def _prepare_section(clean: pd.DataFrame) -> list[str]:
     ]
 
 
-def recommend_defaults(records: pd.DataFrame) -> dict[str, object]:
+def recommend_defaults(
+    records: pd.DataFrame, min_runs: int = 2, sites: list[str] | None = None
+) -> dict[str, object]:
+    """Fastest configuration by median total, among those with enough clean runs (one site set)."""
     clean = _clean(records)
-    if clean.empty:
-        raise ValueError("no successful runs to recommend defaults from")
-    grouped = clean.groupby(CONFIG_COLUMNS)["total_s"].median()
+    if sites:
+        clean = clean[clean["site"].isin(sites)]
+    counts = clean.groupby(CONFIG_COLUMNS).size()
+    eligible = counts[counts >= min_runs].index
+    if len(eligible) == 0:
+        raise ValueError(
+            f"no successful runs to recommend defaults from: a configuration needs at least "
+            f"{min_runs} clean runs"
+        )
+    grouped = clean.groupby(CONFIG_COLUMNS)["total_s"].median().loc[eligible]
     best = grouped.idxmin()
     if not isinstance(best, tuple):
         raise TypeError(f"expected a tuple of configuration values, got {type(best)}")
@@ -106,6 +119,8 @@ def recommend_defaults(records: pd.DataFrame) -> dict[str, object]:
         "reader": config["reader"],
         "measured_area_km2": round(AOI_AREA_KM2, 2),
         "median_total_s": round(float(grouped.min()), 2),
+        "runs": int(counts.loc[best]),
+        "compared_sites": sorted(clean["site"].unique()),
         "evidence_run_ids": sorted(clean.loc[mask, "run_id"].astype(str).unique()),
     }
 

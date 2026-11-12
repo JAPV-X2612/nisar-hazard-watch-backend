@@ -59,6 +59,8 @@ def _build_parser() -> argparse.ArgumentParser:
     defaults = commands.add_parser("defaults", help="write the recommended defaults as JSON")
     defaults.add_argument("--input", nargs="+", type=Path, required=True)
     defaults.add_argument("--out", type=Path, default=Path("defaults.json"))
+    defaults.add_argument("--sites", help="compare configurations on these sites only")
+    defaults.add_argument("--min-runs", type=int, default=2)
 
     metrics = commands.add_parser("metrics", help="time the vectorized metrics offline")
     metrics.add_argument("--shapes", default=",".join(DEFAULT_SHAPES))
@@ -108,7 +110,11 @@ def _report(args: argparse.Namespace) -> int:
 
 
 def _defaults(args: argparse.Namespace) -> int:
-    defaults = recommend_defaults(records=_load_records(args.input))
+    defaults = recommend_defaults(
+        records=_load_records(args.input),
+        min_runs=args.min_runs,
+        sites=_csv_list(args.sites) if args.sites else None,
+    )
     args.out.write_text(json.dumps(defaults, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(defaults, indent=2))
     return 0

@@ -106,6 +106,41 @@ def test_recommended_defaults_come_from_the_fastest_clean_configuration() -> Non
     assert defaults["median_total_s"] == pytest.approx(17.0)
 
 
+def test_a_configuration_with_a_single_fast_run_is_not_enough_evidence() -> None:
+    # Arrange
+    rows = [
+        _row(runtime="modal", site="qadirabad", read_s=12.0, run_id="repeated-1"),
+        _row(runtime="modal", site="qadirabad", read_s=13.0, run_id="repeated-1"),
+        _row(runtime="modal", site="qadirabad", read_s=5.0, run_id="lucky", threads=8),
+    ]
+    records = pd.DataFrame(rows)
+
+    # Act
+    defaults = recommend_defaults(records=records, min_runs=2)
+
+    # Assert
+    assert defaults["threads"] == 5
+    assert defaults["runs"] == 2
+
+
+def test_defaults_can_compare_configurations_on_one_site_only() -> None:
+    # Arrange
+    rows = [
+        _row(runtime="local", site="qadirabad", read_s=60.0, run_id="a"),
+        _row(runtime="local", site="qadirabad", read_s=62.0, run_id="a"),
+        _row(runtime="modal", site="richmond", read_s=5.0, run_id="b"),
+        _row(runtime="modal", site="richmond", read_s=6.0, run_id="b"),
+    ]
+    records = pd.DataFrame(rows)
+
+    # Act
+    defaults = recommend_defaults(records=records, min_runs=2, sites=["qadirabad"])
+
+    # Assert
+    assert defaults["runtime"] == "local"
+    assert defaults["compared_sites"] == ["qadirabad"]
+
+
 def test_recommending_defaults_without_a_clean_run_is_rejected() -> None:
     # Arrange
     records = pd.DataFrame([_row(runtime="local", site="qadirabad", read_s=0.0, error="Boom")])

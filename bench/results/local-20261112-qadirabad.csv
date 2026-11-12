@@ -1,0 +1,3 @@
+run_id,runtime,site,threads,block_mb,multilook,n_images,use_mask,reader,group,dates,scenes,probe_ok,catalog_s,probe_s,read_s,prepare_s,prepare_original_s,total_s,requests,mb_downloaded,mb_hdf5,valid_pct,shape,python,host,cpu_count,error
+local-20261112,local,qadirabad,3,1.0,2,5,True,pyfive,84/A/18,"2026-07-14,2026-08-19,2026-09-12,2026-10-18,2026-11-11",5,True,4.65,4.09,83.85,0.03,4.95,92.62,156,77.5,65.5,100.0,512x512,3.13.7,Darwin arm64,11,
+local-20261112,local,qadirabad,5,1.0,2,5,True,pyfive,84/A/18,"2026-07-14,2026-08-19,2026-09-12,2026-10-18,2026-11-11",5,True,0.95,3.52,50.37,0.03,5.18,54.87,156,77.5,65.5,100.0,512x512,3.13.7,Darwin arm64,11,

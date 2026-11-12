@@ -1,0 +1,2 @@
+run_id,runtime,site,threads,block_mb,multilook,n_images,use_mask,reader,group,dates,scenes,probe_ok,catalog_s,probe_s,read_s,prepare_s,prepare_original_s,total_s,requests,mb_downloaded,mb_hdf5,valid_pct,shape,python,host,cpu_count,error
+modal-20261112,modal,qadirabad,5,1.0,1,5,True,pyfive,84/A/18,"2026-07-14,2026-08-19,2026-09-12,2026-10-18,2026-11-11",5,True,0.76,2.04,16.77,0.26,66.59,19.83,156,77.5,65.5,100.0,1024x1024,3.13.18,Linux x86_64,18,
