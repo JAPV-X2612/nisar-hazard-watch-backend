@@ -1,3 +1,7 @@
 API_PREFIX = "/api/v1"
 HEALTH_PREFIX = "/health"
 LIVE_PATH = "/live"
+EXPLORATIONS_PREFIX = "/explorations"
+LENSES_PREFIX = "/lenses"
+COVERAGE_PREFIX = "/coverage"
+CLIENT_IP_HEADER = "X-Forwarded-For"

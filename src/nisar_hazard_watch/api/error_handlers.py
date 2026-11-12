@@ -28,7 +28,7 @@ def _is_server_error(status_code: int) -> bool:
     return status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
 
 
-def _problem(
+def problem_response(
     request: Request,
     status_code: int,
     reason_code: ReasonCode,
@@ -58,7 +58,7 @@ async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
             "application error", exc_info=exc, extra={"request_id": _request_id(request=request)}
         )
         detail = UNEXPECTED_ERROR_DETAIL
-    return _problem(
+    return problem_response(
         request=request,
         status_code=exc.status_code,
         reason_code=exc.reason_code,
@@ -71,7 +71,7 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
     detail = "; ".join(
         f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
     )
-    return _problem(
+    return problem_response(
         request=request,
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         reason_code=ReasonCode.INVALID_REQUEST,
@@ -86,7 +86,7 @@ async def handle_http_exception(request: Request, exc: StarletteHTTPException) -
         reason_code = ReasonCode.INTERNAL_ERROR
     else:
         reason_code = HTTP_STATUS_REASONS.get(exc.status_code, ReasonCode.INVALID_REQUEST)
-    return _problem(
+    return problem_response(
         request=request,
         status_code=exc.status_code,
         reason_code=reason_code,
@@ -101,7 +101,7 @@ def unexpected_error_response(request: Request, exc: Exception) -> JSONResponse:
     logger.error(
         "unhandled error", exc_info=exc, extra={"request_id": _request_id(request=request)}
     )
-    return _problem(
+    return problem_response(
         request=request,
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         reason_code=ReasonCode.INTERNAL_ERROR,

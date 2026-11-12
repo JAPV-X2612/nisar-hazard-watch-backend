@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from nisar_hazard_watch.config.settings import Settings, get_settings
 from nisar_hazard_watch.constants.environments import Environment
+from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.log_levels import LogLevel
 
 LOCAL_ORIGIN = "http://localhost:5173"
@@ -199,3 +200,41 @@ def test_get_settings_is_cached() -> None:
 
     # Assert
     assert first is second
+
+
+def test_the_synthetic_runner_is_refused_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange
+    monkeypatch.setenv(name="ENVIRONMENT", value="production")
+    monkeypatch.setenv(name="DATABASE_URL", value=RAILWAY_DATABASE_URL)
+    monkeypatch.setenv(name="RUNNER", value="inProcess")
+
+    # Act / Assert
+    with pytest.raises(expected_exception=ValidationError, match="synthetic"):
+        Settings()
+
+
+def test_exploration_settings_default_to_the_gateway_and_the_agreed_limits() -> None:
+    # Arrange
+    expected_deadline = 55.0
+
+    # Act
+    settings = Settings()
+
+    # Assert
+    assert settings.runner is RunnerKind.GATEWAY
+    assert settings.exploration_deadline_seconds == expected_deadline
+    assert settings.max_active_explorations == 5
+    assert settings.ml_gateway_url.startswith("https://")
+
+
+@pytest.mark.parametrize(
+    argnames="name",
+    argvalues=["EXPLORATION_DEADLINE_SECONDS", "ASF_TIMEOUT_SECONDS", "RATE_LIMIT_PER_MINUTE"],
+)
+def test_exploration_limits_must_be_positive(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    # Arrange
+    monkeypatch.setenv(name=name, value="0")
+
+    # Act / Assert
+    with pytest.raises(expected_exception=ValidationError):
+        Settings()

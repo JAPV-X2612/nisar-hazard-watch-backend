@@ -9,6 +9,11 @@ from shapely.affinity import translate
 from shapely.geometry import MultiPolygon, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
+from nisar_hazard_watch.constants.explorations import (
+    NATIVE_PIXEL_SIDE_MAX,
+    NATIVE_PIXEL_SIDE_MIN,
+    NATIVE_PIXEL_SIDE_MULTIPLE,
+)
 from nisar_hazard_watch.constants.sar import (
     AOI_SIDE_KM,
     COORDINATE_DECIMALS,
@@ -198,3 +203,28 @@ def _build_aoi(kind: AoiKind, continuous: list[BaseGeometry], warnings: list[str
         native_pixels=native_pixels,
         warnings=warnings,
     )
+
+
+METERS_PER_DEGREE_LONGITUDE = 111_320.0
+METERS_PER_DEGREE_LATITUDE = 110_540.0
+WINDOW_TOLERANCE_PIXELS = 16
+
+
+def aoi_center(aoi: Aoi) -> tuple[float, float]:
+    """Longitude and latitude of the middle of the area, also when it crosses ±180°."""
+    west, south, east, north = aoi.bbox
+    span = (east - west) % FULL_TURN if west > east else east - west
+    return _wrap(west + span / 2), (south + north) / 2
+
+
+def window_pixels(aoi: Aoi) -> tuple[int, bool]:
+    """Side in native pixels of the square window that covers the area, and whether it was cut."""
+    west, south, east, north = aoi.bbox
+    span = (east - west) % FULL_TURN if west > east else east - west
+    latitude = math.radians((south + north) / 2)
+    width_m = span * METERS_PER_DEGREE_LONGITUDE * math.cos(latitude)
+    height_m = (north - south) * METERS_PER_DEGREE_LATITUDE
+    needed = math.ceil(max(width_m, height_m) / NATIVE_PIXEL_M)
+    rounded = math.ceil(needed / NATIVE_PIXEL_SIDE_MULTIPLE) * NATIVE_PIXEL_SIDE_MULTIPLE
+    pixels = max(NATIVE_PIXEL_SIDE_MIN, min(NATIVE_PIXEL_SIDE_MAX, rounded))
+    return pixels, needed > NATIVE_PIXEL_SIDE_MAX + WINDOW_TOLERANCE_PIXELS

@@ -13,7 +13,7 @@ from nisar_hazard_watch.constants.health import DependencyState
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 PROBE_TIMEOUT_SECONDS = 5.0
-BASELINE_REVISION = "0001"
+HEAD_REVISION = "0002"
 
 pytestmark = [
     pytest.mark.integration,
@@ -53,4 +53,41 @@ def test_alembic_upgrades_a_real_postgres_to_head() -> None:
     version = asyncio.run(read_version())
 
     # Assert
-    assert version == BASELINE_REVISION
+    assert version == HEAD_REVISION
+
+
+async def test_explorations_round_trip_through_the_migrated_schema() -> None:
+    # Arrange
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from nisar_hazard_watch.adapters.db.job_repository import SqlJobRepository
+    from nisar_hazard_watch.constants.explorations import ExplorationStatus
+    from tests.factories import make_job
+
+    get_settings.cache_clear()
+    engine = create_async_engine(get_settings().database_url)
+    repository = SqlJobRepository(
+        session_factory=async_sessionmaker(engine, expire_on_commit=False)
+    )
+    job_id = f"exp_{datetime.now(UTC):%H%M%S%f}"[:20]
+    job = make_job(id=job_id, cache_key="d" * 64)
+    done = job.model_copy(
+        update={
+            "status": ExplorationStatus.SUCCEEDED,
+            "finished_at": job.created_at + timedelta(seconds=30),
+        }
+    )
+
+    # Act
+    await repository.add(job=job)
+    await repository.update(job=done)
+    loaded = await repository.get(job_id=job_id)
+    fresh = await repository.find_fresh(cache_key="d" * 64, newer_than=job.created_at)
+
+    # Assert
+    assert loaded == done
+    assert fresh is not None
+    assert fresh.id == job_id
+    await engine.dispose()

@@ -12,7 +12,12 @@ from nisar_hazard_watch.constants.sar import (
     AoiKind,
 )
 from nisar_hazard_watch.exceptions.geometry_errors import AreaTooLargeError, InvalidGeometryError
-from nisar_hazard_watch.utils.geometry import aoi_from_geojson, aoi_from_point
+from nisar_hazard_watch.utils.geometry import (
+    aoi_center,
+    aoi_from_geojson,
+    aoi_from_point,
+    window_pixels,
+)
 
 QADIRABAD_LON, QADIRABAD_LAT = 73.713, 32.329
 EXPECTED_SQUARE_KM2 = AOI_SIDE_KM**2
@@ -298,3 +303,55 @@ def test_the_vertex_limit_applies_to_all_the_parts_together() -> None:
     # Act / Assert
     with pytest.raises(expected_exception=InvalidGeometryError, match="in total"):
         aoi_from_geojson(geometry=geometry)
+
+
+def test_the_centre_of_a_point_square_is_the_point() -> None:
+    # Arrange
+    aoi = aoi_from_point(lon=QADIRABAD_LON, lat=QADIRABAD_LAT)
+
+    # Act
+    longitude, latitude = aoi_center(aoi=aoi)
+
+    # Assert
+    assert longitude == pytest.approx(QADIRABAD_LON, abs=0.001)
+    assert latitude == pytest.approx(QADIRABAD_LAT, abs=0.001)
+
+
+def test_the_centre_of_an_area_across_the_antimeridian_is_on_the_antimeridian() -> None:
+    # Arrange
+    aoi = aoi_from_point(lon=179.99, lat=10.0)
+
+    # Act
+    longitude, _ = aoi_center(aoi=aoi)
+
+    # Assert
+    assert abs(longitude) == pytest.approx(179.99, abs=0.01)
+
+
+def test_the_contract_square_needs_the_full_native_window() -> None:
+    # Arrange
+    aoi = aoi_from_point(lon=QADIRABAD_LON, lat=QADIRABAD_LAT)
+
+    # Act
+    pixels, truncated = window_pixels(aoi=aoi)
+
+    # Assert
+    assert pixels == 1024
+    assert truncated is False
+
+
+def test_a_small_area_gets_a_small_window_and_a_big_one_is_flagged_as_cut() -> None:
+    # Arrange
+    small = aoi_from_geojson(geometry=_box(73.70, 32.30, 73.71, 32.31))
+    big = aoi_from_geojson(geometry=_box(73.0, 32.0, 73.17, 32.17))
+
+    # Act
+    small_pixels, small_cut = window_pixels(aoi=small)
+    big_pixels, big_cut = window_pixels(aoi=big)
+
+    # Assert
+    assert small_pixels % 8 == 0
+    assert small_pixels < 200
+    assert small_cut is False
+    assert big_pixels == 1024
+    assert big_cut is True
