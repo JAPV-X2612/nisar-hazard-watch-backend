@@ -8,12 +8,14 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from nisar_hazard_watch import __version__
 from nisar_hazard_watch.constants.environments import Environment
+from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.log_levels import LogLevel
 from nisar_hazard_watch.utils.database_url import to_async_database_url
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/nisar_hazard_watch"
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
 DEFAULT_CMR_HEALTH_URL = "https://cmr.earthdata.nasa.gov/search/health"
+DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml-dev.us-east.modal.run"
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
 SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret")
 
@@ -33,6 +35,17 @@ class Settings(BaseSettings):
     cmr_health_timeout_seconds: float = Field(default=5.0, gt=0)
     database_health_timeout_seconds: float = Field(default=3.0, gt=0)
     health_probe_timeout_seconds: float = Field(default=10.0, gt=0)
+    ml_gateway_url: str = DEFAULT_ML_GATEWAY_URL
+    runner: RunnerKind = RunnerKind.GATEWAY
+    asf_timeout_seconds: float = Field(default=30.0, gt=0)
+    gateway_timeout_seconds: float = Field(default=20.0, gt=0)
+    max_active_explorations: int = Field(default=5, ge=1)
+    exploration_deadline_seconds: float = Field(default=55.0, gt=0)
+    exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)
+    rate_limit_per_minute: int = Field(default=20, ge=1)
+    trusted_proxy_hops: int = Field(default=1, ge=0)
+    eta_prior_seconds: float = Field(default=60.0, gt=0)
+    precomputed_cases_path: str | None = None
     earthdata_token: SecretStr | None = None
     modal_token_id: SecretStr | None = None
     modal_token_secret: SecretStr | None = None
@@ -81,6 +94,14 @@ class Settings(BaseSettings):
         explicit_database_url = "database_url" in self.model_fields_set
         if self.environment is Environment.PRODUCTION and not explicit_database_url:
             raise ValueError("DATABASE_URL must be set when ENVIRONMENT=production")
+        return self
+
+    @model_validator(mode="after")
+    def _forbid_the_synthetic_runner_in_production(self) -> Self:
+        if self.environment is Environment.PRODUCTION and self.runner is RunnerKind.IN_PROCESS:
+            raise ValueError(
+                "RUNNER=inProcess returns synthetic results, not allowed in production"
+            )
         return self
 
 
