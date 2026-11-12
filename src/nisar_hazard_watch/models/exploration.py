@@ -1,0 +1,126 @@
+from datetime import date, datetime
+from typing import Any
+
+from pydantic import ConfigDict, Field
+
+from nisar_hazard_watch.constants.errors import ReasonCode
+from nisar_hazard_watch.constants.explorations import (
+    CacheState,
+    ExplorationStatus,
+    Lens,
+    SourceBand,
+    Stage,
+    StageName,
+    StageState,
+)
+from nisar_hazard_watch.constants.sar import Configuration, Direction, Maturity, PlanStatus
+from nisar_hazard_watch.models.base_model import CamelModel
+
+
+class ExplorationRequest(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lens: Lens
+    geometry: dict[str, Any]
+    source: SourceBand = SourceBand.L_BAND
+    optical_evidence: bool = False
+
+
+class StageTiming(CamelModel):
+    name: StageName
+    state: StageState
+    seconds: float | None = None
+    budget_seconds: float | None = None
+
+
+class Progress(CamelModel):
+    scenes_read: int | None = None
+    scenes_total: int
+
+
+class ProblemInfo(CamelModel):
+    reason_code: ReasonCode
+    detail: str
+
+
+class ExplorationScene(CamelModel):
+    granule_id: str
+    acquired_at: datetime
+    track: int
+    direction: Direction
+    frame: int
+    mode: str
+    maturity: Maturity
+    configuration: Configuration
+    crid: str
+    version: int
+    coverage: float
+
+
+class Layer(CamelModel):
+    id: str
+    title: str
+    kind: str
+    units: str
+    colormap: str
+    bounds: tuple[float, float, float, float]
+    url: str
+    legend: dict[str, str] | None = None
+    value_range: tuple[float, float] | None = None
+
+
+class PlanSummary(CamelModel):
+    status: PlanStatus
+    series_key: str | None = None
+    dates: list[date] = Field(default_factory=list)
+    maturity_mixed: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
+class ExplorationResult(CamelModel):
+    geometry: dict[str, Any]
+    area_km2: float
+    window_start: date
+    window_end: date
+    scenes: list[ExplorationScene]
+    observations: list[dict[str, Any]]
+    lens: dict[str, Any] | None
+    aoi_summary: dict[str, Any] | None
+    layers: list[Layer]
+    quality: dict[str, Any]
+    limitations: list[str]
+    scientific_status: str
+    timings: dict[str, float]
+    is_demo: bool = False
+
+
+class ExplorationView(CamelModel):
+    id: str
+    status: ExplorationStatus
+    stage: Stage
+    lens: Lens
+    source: SourceBand
+    cache: CacheState
+    eta_seconds: float | None = None
+    eta_remaining_seconds: float | None = None
+    elapsed_seconds: float
+    stages: list[StageTiming] = Field(default_factory=list)
+    progress: Progress | None = None
+    plan: PlanSummary | None = None
+    result: ExplorationResult | None = None
+    error: ProblemInfo | None = None
+
+
+class CoverageView(CamelModel):
+    plan: PlanSummary
+    area_km2: float
+    warnings: list[str] = Field(default_factory=list)
+    precomputed_case: str | None = None
+
+
+class LensInfo(CamelModel):
+    id: Lens
+    title: str
+    description: str
+    optical_evidence: bool
+    minimum_dates: int

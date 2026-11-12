@@ -1,0 +1,158 @@
+{
+ "api_version": "2.0",
+ "job_id": "01299b8dba7144fea6612792e7cfc54c",
+ "status": "succeeded",
+ "status_url": "/v2/jobs/01299b8dba7144fea6612792e7cfc54c",
+ "cache": "miss",
+ "error": null,
+ "result": {
+  "operation": "explore",
+  "science_status": "complete",
+  "revision": "3913b28a7607ab8a7f53bee0",
+  "elapsed_seconds": 22.372,
+  "visualization_seconds": 12.317,
+  "science": {
+   "status": "complete",
+   "series_key": "084_A_018_4005_DHDH",
+   "lens": {
+    "status": "evaluated",
+    "target_date": "2026-11-11",
+    "baseline_dates": [
+     "2026-07-14",
+     "2026-08-19",
+     "2026-09-12",
+     "2026-10-18"
+    ],
+    "observation_bracket": [
+     "2026-10-18",
+     "2026-11-11"
+    ],
+    "point": {
+     "status": "within_observed_baseline",
+     "target_minus_baseline_db": {
+      "HH": -1.1593303680419922,
+      "HV": -0.8499851226806641
+     },
+     "diagnostic_half_width_db": {
+      "HH": 3.0,
+      "HV": 5.761958589363098
+     }
+    },
+    "radar": {
+     "polarizations": [
+      "HH",
+      "HV"
+     ],
+     "posting_m": 10.0,
+     "grid_cells": 1048576,
+     "common_cells": 1048576,
+     "grid": {
+      "epsg": 32643,
+      "bounds_native": [
+       373740.0,
+       3572520.0,
+       383980.0,
+       3582760.0
+      ],
+      "pixel_spacing_m": [
+       10.0,
+       10.0
+      ],
+      "width": 1024,
+      "height": 1024
+     }
+    }
+   },
+   "observations": [
+    {
+     "date": "2026-07-14",
+     "status": "observed",
+     "granule_id": "NISAR_L2_PR_GCOV_025_084_A_018_4005_DHDH_A_20260714T002204_20260714T002239_P05023_F_F_J_001"
+    },
+    {
+     "date": "2026-08-19",
+     "status": "observed",
+     "granule_id": "NISAR_L2_PR_GCOV_028_084_A_018_4005_DHDH_A_20260819T002202_20260819T002237_P05023_N_F_J_001"
+    },
+    {
+     "date": "2026-09-12",
+     "status": "observed",
+     "granule_id": "NISAR_L2_PR_GCOV_030_084_A_018_4005_DHDH_A_20260912T002202_20260912T002237_P05023_N_F_J_001"
+    },
+    {
+     "date": "2026-10-18",
+     "status": "observed",
+     "granule_id": "NISAR_L2_PR_GCOV_033_084_A_018_4005_DHDH_A_20261018T002202_20261018T002237_P05023_N_F_J_001"
+    },
+    {
+     "date": "2026-11-11",
+     "status": "observed",
+     "granule_id": "NISAR_L2_UR_GCOV_035_084_A_018_4005_DHDH_A_20261111T002203_20261111T002238_P05036_F_F_J_001"
+    }
+   ],
+   "aoi_summary": {
+    "cells_in_area": 1046529,
+    "area_covered_fraction": 0.998,
+    "reason": null,
+    "cells_with_measurement": 1046529,
+    "cells_departing_from_baseline": 344013,
+    "departing_fraction": 0.3287180766132616,
+    "median_target_minus_baseline_db": {
+     "HH": -1.7017879486083984,
+     "HV": -0.21632957458496094
+    },
+    "definition": "Cells where the target departs from the observed baseline by more than the diagnostic half-width in any polarization; descriptive, not a classification."
+   },
+   "timings": {
+    "prefetch_s": 0.067,
+    "measure_s": 5.894,
+    "total_s": 5.994
+   }
+  },
+  "layers": [
+   {
+    "id": "display_2026-07-14_HH",
+    "png_url": "/v2/jobs/01299b8dba7144fea6612792e7cfc54c/layers/display_2026-07-14_HH.png",
+    "cog_url": "/v2/jobs/01299b8dba7144fea6612792e7cfc54c/layers/display_2026-07-14_HH.tif",
+    "bounds": [
+     73.65784953732732,
+     32.282333136339126,
+     73.76793038711803,
+     32.375797943792264
+    ],
+    "crs": "EPSG:4326",
+    "north_up": true,
+    "units": "dB",
+    "colormap": "gray",
+    "range": [
+     -30,
+     0
+    ],
+    "legend": null
+   },
+   {
+    "id": "display_flood_signature_flags_co_pol_brightening",
+    "png_url": "/v2/jobs/01299b8dba7144fea6612792e7cfc54c/layers/display_flood_signature_flags_co_pol_brightening.png",
+    "cog_url": "/v2/jobs/01299b8dba7144fea6612792e7cfc54c/layers/display_flood_signature_flags_co_pol_brightening.tif",
+    "bounds": [
+     73.65784953732732,
+     32.282333136339126,
+     73.76793038711803,
+     32.375797943792264
+    ],
+    "crs": "EPSG:4326",
+    "north_up": true,
+    "units": "diagnostic mask",
+    "colormap": "diagnostic_categories",
+    "range": [
+     0,
+     1
+    ],
+    "legend": {
+     "0": "absent",
+     "1": "present"
+    }
+   }
+  ]
+ }
+}
