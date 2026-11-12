@@ -92,9 +92,10 @@ async def test_a_product_that_answers_with_a_sentence_is_left_out_not_treated_as
     assert len(search.detections) == ROW_COUNT
 
 
-async def test_when_no_product_serves_data_the_context_is_unavailable() -> None:
+@pytest.mark.parametrize(argnames="status", argvalues=[200, 400])
+async def test_when_no_product_serves_data_the_context_is_unavailable(status: int) -> None:
     # Arrange
-    handler = Recorder(answer=httpx.Response(status_code=200, text="Invalid MAP_KEY."))
+    handler = Recorder(answer=httpx.Response(status_code=status, text="Invalid MAP_KEY."))
 
     # Act / Assert
     with pytest.raises(expected_exception=FireDataUnavailableError, match="served no data"):
