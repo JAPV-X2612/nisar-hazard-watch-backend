@@ -1,0 +1,17 @@
+{
+  "runtime": "modal-us-west",
+  "threads": 5,
+  "block_mb": 1.0,
+  "multilook": 2,
+  "max_images": 5,
+  "reader": "pyfive",
+  "measured_area_km2": 104.86,
+  "median_total_s": 10.84,
+  "runs": 3,
+  "compared_sites": [
+    "qadirabad"
+  ],
+  "evidence_run_ids": [
+    "modal-us-west-20261112"
+  ]
+}

@@ -1,0 +1,2 @@
+run_id,runtime,site,threads,block_mb,multilook,n_images,use_mask,reader,group,dates,scenes,probe_ok,catalog_s,probe_s,read_s,prepare_s,prepare_original_s,total_s,requests,mb_downloaded,mb_hdf5,valid_pct,shape,python,host,cpu_count,error
+local-20261112,local,richmond,5,1.0,2,5,True,pyfive,119/A/22,"2026-07-04,2026-08-21,2026-09-02,2026-10-08,2026-11-01",5,True,3.06,4.18,33.93,0.01,1.37,41.18,79,44.0,31.5,99.0,273x273,3.13.7,Darwin arm64,11,
