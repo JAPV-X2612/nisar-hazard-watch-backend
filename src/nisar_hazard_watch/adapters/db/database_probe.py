@@ -3,6 +3,7 @@ import logging
 import time
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from nisar_hazard_watch.constants.health import DependencyName, DependencyState
@@ -25,15 +26,17 @@ class DatabaseProbe:
         try:
             async with asyncio.timeout(self._timeout_seconds), self._engine.connect() as connection:
                 await connection.execute(text("SELECT 1"))
-        except Exception:
+        except TimeoutError:
+            logger.warning("database health check timed out", exc_info=True)
+            return self._down(detail=f"database did not answer within {self._timeout_seconds:g}s")
+        except (OSError, SQLAlchemyError):
             logger.warning("database health check failed", exc_info=True)
-            return DependencyReport(
-                state=DependencyState.DOWN,
-                critical=self.critical,
-                detail="database is unreachable",
-            )
+            return self._down(detail="database is unreachable")
         return DependencyReport(
             state=DependencyState.OK,
             critical=self.critical,
-            latency_ms=elapsed_ms(started),
+            latency_ms=elapsed_ms(started=started),
         )
+
+    def _down(self, detail: str) -> DependencyReport:
+        return DependencyReport(state=DependencyState.DOWN, critical=self.critical, detail=detail)

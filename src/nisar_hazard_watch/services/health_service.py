@@ -29,21 +29,23 @@ class HealthService:
         service_name: str,
         version: str,
         environment: Environment,
+        probe_timeout_seconds: float,
         clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._probes = list(probes)
         self._service_name = service_name
         self._version = version
         self._environment = environment
+        self._probe_timeout_seconds = probe_timeout_seconds
         self._clock = clock
 
     async def check(self) -> HealthResponse:
-        reports = await asyncio.gather(*(self._run(probe) for probe in self._probes))
+        reports = await asyncio.gather(*(self._run(probe=probe) for probe in self._probes))
         dependencies = {
             probe.name: report for probe, report in zip(self._probes, reports, strict=True)
         }
         return HealthResponse(
-            status=_overall_status(dependencies),
+            status=_overall_status(dependencies=dependencies),
             service=self._service_name,
             version=self._version,
             environment=self._environment,
@@ -53,11 +55,15 @@ class HealthService:
 
     async def _run(self, probe: DependencyProbe) -> DependencyReport:
         try:
-            return await probe.check()
+            async with asyncio.timeout(self._probe_timeout_seconds):
+                return await probe.check()
+        except TimeoutError:
+            logger.warning("health probe %s timed out", probe.name)
+            return self._down(probe=probe, detail="health probe timed out")
         except Exception:
             logger.exception("health probe %s raised", probe.name)
-            return DependencyReport(
-                state=DependencyState.DOWN,
-                critical=probe.critical,
-                detail="health probe failed unexpectedly",
-            )
+            return self._down(probe=probe, detail="health probe failed unexpectedly")
+
+    @staticmethod
+    def _down(probe: DependencyProbe, detail: str) -> DependencyReport:
+        return DependencyReport(state=DependencyState.DOWN, critical=probe.critical, detail=detail)

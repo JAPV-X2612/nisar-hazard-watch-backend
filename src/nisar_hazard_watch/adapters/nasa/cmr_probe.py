@@ -10,6 +10,8 @@ from nisar_hazard_watch.utils.timing import elapsed_ms
 logger = logging.getLogger(__name__)
 
 COMPONENT_OK_KEY = "ok?"
+UNREACHABLE_DETAIL = "NASA CMR is unreachable"
+UNEXPECTED_RESPONSE_DETAIL = "NASA CMR returned an unexpected health response"
 
 
 class CmrProbe:
@@ -25,28 +27,41 @@ class CmrProbe:
         try:
             response = await self._client.get(self._health_url)
             response.raise_for_status()
-            components = response.json()
+            body = response.json()
         except (httpx.HTTPError, ValueError):
             logger.warning("NASA CMR health check failed", exc_info=True)
-            return DependencyReport(
-                state=DependencyState.DOWN,
-                critical=self.critical,
-                detail="NASA CMR is unreachable",
-            )
-        failing = sorted(
-            name
-            for name, status in components.items()
-            if isinstance(status, dict) and status.get(COMPONENT_OK_KEY) is False
-        )
+            return self._down(detail=UNREACHABLE_DETAIL)
+
+        components = self._components(body=body)
+        if not components:
+            logger.warning("NASA CMR health response has no recognised components: %r", body)
+            return self._down(detail=UNEXPECTED_RESPONSE_DETAIL)
+
+        failing = sorted(name for name, healthy in components.items() if not healthy)
         if failing:
-            return DependencyReport(
-                state=DependencyState.DOWN,
-                critical=self.critical,
-                detail=f"failing components: {', '.join(failing)}",
-                latency_ms=elapsed_ms(started),
-            )
+            detail = f"failing components: {', '.join(failing)}"
+            logger.warning("NASA CMR reports %s", detail)
+            return self._down(detail=detail, latency_ms=elapsed_ms(started=started))
         return DependencyReport(
             state=DependencyState.OK,
             critical=self.critical,
-            latency_ms=elapsed_ms(started),
+            latency_ms=elapsed_ms(started=started),
+        )
+
+    @staticmethod
+    def _components(body: object) -> dict[str, bool]:
+        if not isinstance(body, dict):
+            return {}
+        return {
+            name: status[COMPONENT_OK_KEY] is True
+            for name, status in body.items()
+            if isinstance(status, dict) and COMPONENT_OK_KEY in status
+        }
+
+    def _down(self, detail: str, latency_ms: float | None = None) -> DependencyReport:
+        return DependencyReport(
+            state=DependencyState.DOWN,
+            critical=self.critical,
+            detail=detail,
+            latency_ms=latency_ms,
         )

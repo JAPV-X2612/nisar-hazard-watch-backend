@@ -33,9 +33,11 @@ def _run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     engine = create_async_engine(get_settings().database_url)
-    async with engine.connect() as connection:
-        await connection.run_sync(_run_migrations)
-    await engine.dispose()
+    try:
+        async with engine.connect() as connection:
+            await connection.run_sync(_run_migrations)
+    finally:
+        await engine.dispose()
 
 
 if context.is_offline_mode():

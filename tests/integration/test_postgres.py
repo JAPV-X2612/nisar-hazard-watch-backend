@@ -49,7 +49,7 @@ def test_alembic_upgrades_a_real_postgres_to_head() -> None:
         return version
 
     # Act
-    command.upgrade(config, "head")
+    command.upgrade(config=config, revision="head")
     version = asyncio.run(read_version())
 
     # Assert

@@ -17,17 +17,20 @@ Or run everything in containers with `docker compose up --build` (applies the mi
 
 ## Configuration
 
-Environment variables (see `.env.example`); `DATABASE_URL` accepts the plain `postgresql://` form that Railway provides and adds the asyncpg driver itself.
+Environment variables (see `.env.example`). The app fails at start-up on a malformed value instead of running misconfigured: origins, timeouts and the log level are validated, and `ENVIRONMENT=production` refuses to start without an explicit `DATABASE_URL`. `DATABASE_URL` accepts the plain `postgresql://` form that Railway provides and adds the asyncpg driver itself.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `ENVIRONMENT` | `local` | `local`, `test` or `production` |
-| `LOG_LEVEL` | `INFO` | Root log level (JSON logs on stdout) |
-| `DATABASE_URL` | local Postgres | SQLAlchemy URL of the application database |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated list or JSON array of allowed browser origins |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` (any case); JSON logs on stdout |
+| `DATABASE_URL` | local Postgres | SQLAlchemy URL of the application database (required in production, never printed) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated list or JSON array of origins such as `https://app.example.com` (scheme and host, no path, no trailing slash, at least one) |
 | `CMR_HEALTH_URL` | NASA CMR health | Endpoint probed by `/api/v1/health` |
-| `EARTHDATA_TOKEN` | unset | Reported as configured or not; never logged or returned |
-| `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | unset | Reported as configured or not; never logged or returned |
+| `CMR_HEALTH_TIMEOUT_SECONDS` | `5` | Per-phase HTTP timeout of the CMR probe (> 0) |
+| `DATABASE_HEALTH_TIMEOUT_SECONDS` | `3` | Total deadline of the database probe (> 0) |
+| `HEALTH_PROBE_TIMEOUT_SECONDS` | `10` | Total deadline of any probe; a slower one is reported as down (> 0) |
+| `EARTHDATA_TOKEN` | unset | Reported as configured or not (blank counts as missing); never logged or returned |
+| `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | unset | Both are needed to count as configured; never logged or returned |
 
 ## API
 
@@ -36,7 +39,7 @@ Environment variables (see `.env.example`); `DATABASE_URL` accepts the plain `po
 | `GET /api/v1/health` | Dependency report: database (critical), NASA CMR, Modal and Earthdata credentials. `200` when ok or degraded, `503` when a critical dependency is down |
 | `GET /api/v1/health/live` | Liveness only; never touches a dependency (used by the Railway health check) |
 
-Every response carries `X-Request-ID` (a safe incoming value is kept, otherwise one is generated). Errors are `application/problem+json`:
+Every response carries `X-Request-ID` (a safe incoming value is kept, otherwise one is generated), including unexpected 500s, which also keep their CORS headers. Errors are `application/problem+json` (server-side details are never echoed, and the headers of an `HTTPException` such as `Allow` or `Retry-After` are preserved):
 
 ```json
 { "type": "about:blank", "title": "Not Found", "status": 404, "detail": "Not Found",
@@ -49,12 +52,12 @@ Payload fields are camelCase.
 
 ```
 src/nisar_hazard_watch/
-  api/          app factory, composition root, middleware, error handlers, routes/<resource>/
+  api/          app factory, composition root, middlewares (request id, unexpected errors), error handlers, routes/<resource>/
   services/     use cases (HealthService)
   ports/        interfaces the services depend on (DependencyProbe)
   adapters/     implementations: db/, nasa/, credentials/
   models/       camelCase DTOs (CamelModel), problem details, health
-  constants/    routes, reason codes, enums: no magic strings
+  constants/    routes, headers, reason codes, enums: no magic strings
   config/       settings (pydantic-settings)
   exceptions/   AppError and subclasses
   utils/        logging, request context, database url, timing

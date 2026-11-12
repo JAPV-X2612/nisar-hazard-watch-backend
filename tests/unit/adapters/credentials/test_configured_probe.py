@@ -5,8 +5,8 @@ from nisar_hazard_watch.constants.health import DependencyName, DependencyState
 
 
 @pytest.mark.parametrize(
-    ("configured", "expected"),
-    [(True, DependencyState.CONFIGURED), (False, DependencyState.NOT_CONFIGURED)],
+    argnames=("configured", "expected"),
+    argvalues=[(True, DependencyState.CONFIGURED), (False, DependencyState.NOT_CONFIGURED)],
 )
 async def test_the_state_follows_whether_a_value_is_configured(
     configured: bool, expected: DependencyState

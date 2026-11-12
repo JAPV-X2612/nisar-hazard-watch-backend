@@ -29,4 +29,5 @@ def build_health_service(
         service_name=settings.service_name,
         version=settings.version,
         environment=settings.environment,
+        probe_timeout_seconds=settings.health_probe_timeout_seconds,
     )

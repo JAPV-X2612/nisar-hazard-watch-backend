@@ -3,6 +3,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from nisar_hazard_watch.constants.log_levels import LogLevel
 from nisar_hazard_watch.utils.request_context import request_id_var
 
 
@@ -22,9 +23,9 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
-def configure_logging(level: str) -> None:
+def configure_logging(level: LogLevel) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.handlers = [handler]
-    root.setLevel(level.upper())
+    root.setLevel(level.value)
