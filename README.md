@@ -29,7 +29,7 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `CMR_HEALTH_TIMEOUT_SECONDS` | `5` | Per-phase HTTP timeout of the CMR probe (> 0) |
 | `DATABASE_HEALTH_TIMEOUT_SECONDS` | `3` | Total deadline of the database probe (> 0) |
 | `HEALTH_PROBE_TIMEOUT_SECONDS` | `10` | Total deadline of any probe; a slower one is reported as down (> 0) |
-| `ML_GATEWAY_URL` | `https://ch0comilo--nisar-hazard-watch-ml-dev.us-east.modal.run` | Modal gateway that runs the analysis of a scene plan |
+| `ML_GATEWAY_URL` | `https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run` | Modal gateway that runs the analysis of a scene plan (the production app `nisar-hazard-watch-ml`, deployed from `main` of `NISAR-Modeling`) |
 | `RUNNER` | `gateway` | `gateway`, or `inProcess` (synthetic results labelled as demo; refused in production) |
 | `MAX_ACTIVE_EXPLORATIONS` | `5` | Explorations running at once; more get `503 QUEUE_FULL` |
 | `EXPLORATION_DEADLINE_SECONDS` | `55` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL` |

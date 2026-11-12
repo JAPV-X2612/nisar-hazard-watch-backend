@@ -15,7 +15,7 @@ from nisar_hazard_watch.utils.database_url import to_async_database_url
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/nisar_hazard_watch"
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
 DEFAULT_CMR_HEALTH_URL = "https://cmr.earthdata.nasa.gov/search/health"
-DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml-dev.us-east.modal.run"
+DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run"
 # Railway's edge appends two entries (measured 2026-11-12): the client is second from the right.
 DEFAULT_TRUSTED_PROXY_HOPS = 2
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
