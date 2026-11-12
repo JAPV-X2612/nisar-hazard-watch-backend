@@ -27,6 +27,7 @@ BODY = {"lens": "flood_wetland", "geometry": POINT}
 URL = "/api/v1/explorations"
 LONG_RUN_SECONDS = 10_000
 FORWARDED_FOR = "X-Forwarded-For"
+EDGE_HOP = "100.64.0.1"
 
 
 def _asf_catalog(status: int = 200, features: list | None = None) -> httpx.MockTransport:
@@ -229,8 +230,8 @@ def test_each_client_is_limited_on_its_own_and_gets_a_429(
 ) -> None:
     # Arrange
     client = start_api(rate_limit_per_minute=2)
-    first_client = {FORWARDED_FOR: "203.0.113.7"}
-    other_client = {FORWARDED_FOR: "198.51.100.9"}
+    first_client = {FORWARDED_FOR: f"203.0.113.7, {EDGE_HOP}"}
+    other_client = {FORWARDED_FOR: f"198.51.100.9, {EDGE_HOP}"}
 
     # Act
     allowed = [client.post(url=URL, json=BODY, headers=first_client).status_code for _ in range(2)]
@@ -249,8 +250,8 @@ def test_a_spoofed_leading_forwarded_address_does_not_dodge_the_limit(
 ) -> None:
     # Arrange
     client = start_api(rate_limit_per_minute=1)
-    first = {FORWARDED_FOR: "192.0.2.1, 203.0.113.7"}
-    second = {FORWARDED_FOR: "192.0.2.2, 203.0.113.7"}
+    first = {FORWARDED_FOR: f"192.0.2.1, 203.0.113.7, {EDGE_HOP}"}
+    second = {FORWARDED_FOR: f"192.0.2.2, 203.0.113.7, {EDGE_HOP}"}
 
     # Act
     allowed = client.post(url=URL, json=BODY, headers=first)
