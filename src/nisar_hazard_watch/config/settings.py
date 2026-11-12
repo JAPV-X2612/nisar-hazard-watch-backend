@@ -16,10 +16,11 @@ DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ni
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
 DEFAULT_CMR_HEALTH_URL = "https://cmr.earthdata.nasa.gov/search/health"
 DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run"
+DEFAULT_FIRMS_URL = "https://firms.modaps.eosdis.nasa.gov"
 # Railway's edge appends two entries (measured 2026-11-12): the client is second from the right.
 DEFAULT_TRUSTED_PROXY_HOPS = 2
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
-SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret")
+SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret", "firms_map_key")
 
 
 class Settings(BaseSettings):
@@ -41,6 +42,9 @@ class Settings(BaseSettings):
     runner: RunnerKind = RunnerKind.GATEWAY
     asf_timeout_seconds: float = Field(default=30.0, gt=0)
     gateway_timeout_seconds: float = Field(default=20.0, gt=0)
+    firms_url: str = DEFAULT_FIRMS_URL
+    firms_timeout_seconds: float = Field(default=10.0, gt=0)
+    fire_context_timeout_seconds: float = Field(default=15.0, gt=0)
     max_active_explorations: int = Field(default=5, ge=1)
     exploration_deadline_seconds: float = Field(default=55.0, gt=0)
     exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)
@@ -51,6 +55,7 @@ class Settings(BaseSettings):
     earthdata_token: SecretStr | None = None
     modal_token_id: SecretStr | None = None
     modal_token_secret: SecretStr | None = None
+    firms_map_key: SecretStr | None = None
 
     @field_validator("log_level", mode="before")
     @classmethod

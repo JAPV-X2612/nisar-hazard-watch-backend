@@ -6,12 +6,14 @@ from nisar_hazard_watch.adapters.cases.static_precomputed_cases import StaticPre
 from nisar_hazard_watch.adapters.credentials.configured_probe import ConfiguredProbe
 from nisar_hazard_watch.adapters.db.database_probe import DatabaseProbe
 from nisar_hazard_watch.adapters.db.job_repository import SqlJobRepository
+from nisar_hazard_watch.adapters.firms.firms_client import FirmsClient
 from nisar_hazard_watch.adapters.nasa.cmr_probe import CmrProbe
 from nisar_hazard_watch.adapters.runners.gateway_runner import GatewayRunner
 from nisar_hazard_watch.adapters.runners.in_process_runner import InProcessRunner
 from nisar_hazard_watch.config.settings import Settings
 from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.health import DependencyName
+from nisar_hazard_watch.hazards.wildfire.fire_context_provider import FirmsFireContextProvider
 from nisar_hazard_watch.ports.analysis_runner import AnalysisRunner
 from nisar_hazard_watch.services.eta_estimator import EtaEstimator
 from nisar_hazard_watch.services.exploration_service import ExplorationService
@@ -48,6 +50,7 @@ def build_exploration_service(
     engine: AsyncEngine,
     asf_client: httpx.AsyncClient,
     gateway_client: httpx.AsyncClient,
+    firms_client: httpx.AsyncClient,
     runner: AnalysisRunner | None = None,
 ) -> ExplorationService:
     repository = SqlJobRepository(
@@ -59,6 +62,13 @@ def build_exploration_service(
             if settings.runner is RunnerKind.IN_PROCESS
             else GatewayRunner(client=gateway_client, base_url=settings.ml_gateway_url)
         )
+    fire_source = (
+        FirmsClient(
+            client=firms_client, base_url=settings.firms_url, map_key=settings.firms_map_key
+        )
+        if settings.firms_map_key is not None
+        else None
+    )
     return ExplorationService(
         planner=ScenePlanner(catalog=AsfCatalog(client=asf_client)),
         runner=runner,
@@ -68,4 +78,7 @@ def build_exploration_service(
         max_active=settings.max_active_explorations,
         deadline_seconds=settings.exploration_deadline_seconds,
         cache_ttl_seconds=settings.exploration_cache_ttl_seconds,
+        fire_context=FirmsFireContextProvider(
+            source=fire_source, timeout_seconds=settings.fire_context_timeout_seconds
+        ),
     )

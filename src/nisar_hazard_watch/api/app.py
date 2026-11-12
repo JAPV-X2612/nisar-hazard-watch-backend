@@ -32,6 +32,7 @@ def create_app(
     cmr_transport: httpx.AsyncBaseTransport | None = None,
     asf_transport: httpx.AsyncBaseTransport | None = None,
     gateway_transport: httpx.AsyncBaseTransport | None = None,
+    firms_transport: httpx.AsyncBaseTransport | None = None,
     runner: AnalysisRunner | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
@@ -51,6 +52,9 @@ def create_app(
                 httpx.AsyncClient(
                     timeout=settings.gateway_timeout_seconds, transport=gateway_transport
                 ) as gateway_client,
+                httpx.AsyncClient(
+                    timeout=settings.firms_timeout_seconds, transport=firms_transport
+                ) as firms_client,
             ):
                 app.state.health_service = build_health_service(
                     settings=settings, engine=engine, http_client=http_client
@@ -60,6 +64,7 @@ def create_app(
                     engine=engine,
                     asf_client=asf_client,
                     gateway_client=gateway_client,
+                    firms_client=firms_client,
                     runner=runner,
                 )
                 app.state.rate_limiter = RateLimiter(

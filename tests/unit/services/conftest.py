@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from nisar_hazard_watch.adapters.cases.static_precomputed_cases import StaticPrecomputedCases
 from nisar_hazard_watch.adapters.db.job_repository import SqlJobRepository
 from nisar_hazard_watch.adapters.db.models import Base
+from nisar_hazard_watch.constants.fire_context import FireContextStatus
+from nisar_hazard_watch.models.fire_context import FireContext
 from nisar_hazard_watch.models.geometry import Aoi
 from nisar_hazard_watch.models.scene import ScenePlan
 from nisar_hazard_watch.ports.analysis_runner import (
@@ -16,6 +18,7 @@ from nisar_hazard_watch.ports.analysis_runner import (
     RunnerState,
     RunnerTicket,
 )
+from nisar_hazard_watch.ports.fire_context_provider import FireContextProvider
 from nisar_hazard_watch.ports.precomputed_cases import PrecomputedCases
 from nisar_hazard_watch.services.eta_estimator import EtaEstimator
 from nisar_hazard_watch.services.exploration_service import ExplorationService
@@ -72,6 +75,20 @@ class ScriptedRunner:
         return self.poll_ticket
 
 
+class FakeFireContext:
+    """Returns the next scripted context and counts the plans it was asked about."""
+
+    def __init__(self, *contexts: FireContext) -> None:
+        self.contexts = list(contexts) or [
+            FireContext(status=FireContextStatus.AVAILABLE, note="n")
+        ]
+        self.plans: list[ScenePlan] = []
+
+    async def fire_context(self, plan: ScenePlan) -> FireContext:
+        self.plans.append(plan)
+        return self.contexts.pop(0) if len(self.contexts) > 1 else self.contexts[0]
+
+
 def runner_result(**overrides: object) -> RunnerResult:
     values: dict[str, object] = {
         "science_status": "complete",
@@ -115,7 +132,9 @@ def make_service(
     repository: SqlJobRepository, clock: ManualClock, planner: FakePlanner, runner: ScriptedRunner
 ) -> Callable[..., ExplorationService]:
     def build(
-        cases: PrecomputedCases | None = None, max_active: int = MAX_ACTIVE
+        cases: PrecomputedCases | None = None,
+        max_active: int = MAX_ACTIVE,
+        fire_context: FireContextProvider | None = None,
     ) -> ExplorationService:
         return ExplorationService(
             planner=planner,  # type: ignore[arg-type]
@@ -126,6 +145,7 @@ def make_service(
             max_active=max_active,
             deadline_seconds=DEADLINE_SECONDS,
             cache_ttl_seconds=CACHE_TTL_SECONDS,
+            fire_context=fire_context,
             clock=clock,
         )
 
