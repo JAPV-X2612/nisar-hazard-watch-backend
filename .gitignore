@@ -275,3 +275,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local agent workspace: plans, specs, worktrees, skills and notes (never part of a PR)
+.superpowers/
+.claude/
+DELETE/
