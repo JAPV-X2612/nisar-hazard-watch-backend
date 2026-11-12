@@ -16,6 +16,8 @@ DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ni
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
 DEFAULT_CMR_HEALTH_URL = "https://cmr.earthdata.nasa.gov/search/health"
 DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml-dev.us-east.modal.run"
+# Railway's edge appends two entries (measured 2026-11-12): the client is second from the right.
+DEFAULT_TRUSTED_PROXY_HOPS = 2
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
 SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret")
 
@@ -43,7 +45,7 @@ class Settings(BaseSettings):
     exploration_deadline_seconds: float = Field(default=55.0, gt=0)
     exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)
     rate_limit_per_minute: int = Field(default=20, ge=1)
-    trusted_proxy_hops: int = Field(default=1, ge=0)
+    trusted_proxy_hops: int = Field(default=DEFAULT_TRUSTED_PROXY_HOPS, ge=0)
     eta_prior_seconds: float = Field(default=60.0, gt=0)
     precomputed_cases_path: str | None = None
     earthdata_token: SecretStr | None = None

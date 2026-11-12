@@ -12,6 +12,7 @@ RAILWAY_DATABASE_URL = "postgresql://user:p4ssw0rd-x@postgres.railway.internal:5
 EXPECTED_ASYNC_URL = "postgresql+asyncpg://user:p4ssw0rd-x@postgres.railway.internal:5432/railway"
 SECRET_VALUE = "super-secret-token"
 DATABASE_PASSWORD = "p4ssw0rd-x"
+RAILWAY_PROXY_HOPS = 2
 
 
 def test_defaults_describe_a_local_environment() -> None:
@@ -26,6 +27,7 @@ def test_defaults_describe_a_local_environment() -> None:
     assert settings.cors_allowed_origins == expected_origins
     assert settings.earthdata_token is None
     assert settings.database_url.startswith("postgresql+asyncpg://")
+    assert settings.trusted_proxy_hops == RAILWAY_PROXY_HOPS
 
 
 def test_database_url_from_the_platform_gets_the_async_driver(
