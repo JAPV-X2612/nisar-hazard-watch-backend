@@ -219,3 +219,24 @@ def test_directions_are_part_of_the_group_identity() -> None:
     # Assert
     assert group is not None
     assert group.direction is Direction.DESCENDING
+
+
+def test_a_group_is_scored_by_the_dates_of_its_newest_scene_mode_family() -> None:
+    # Arrange
+    older_dual = make_series(count=8)
+    newest_single = [
+        make_scene(
+            acquired_at=SERIES_START + timedelta(days=12 * (8 + index)),
+            mode="SHSH",
+            polarizations=["HH"],
+        )
+        for index in range(2)
+    ]
+    steady = make_series(count=5, **OTHER_GROUP)
+
+    # Act
+    group = choose_group(scenes=[*older_dual, *newest_single, *steady])
+
+    # Assert
+    assert group is not None
+    assert group.track == OTHER_GROUP["track"]

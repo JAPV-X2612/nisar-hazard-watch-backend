@@ -22,11 +22,11 @@ def dedupe_scenes(scenes: list[Scene]) -> list[Scene]:
     """One scene per acquisition: best maturity, then configuration, then CRID and version."""
     best: dict[tuple, Scene] = {}
     for scene in scenes:
-        key = (scene.cycle, *_group_key(scene), scene.acquired_at)
+        key = (scene.cycle, *_group_key(scene=scene), scene.acquired_at)
         current = best.get(key)
-        if current is None or _rank(scene) > _rank(current):
+        if current is None or _rank(scene=scene) > _rank(scene=current):
             best[key] = scene
-    return sorted(best.values(), key=lambda scene: (scene.acquired_at, _group_key(scene)))
+    return sorted(best.values(), key=lambda scene: (scene.acquired_at, _group_key(scene=scene)))
 
 
 def _rank(scene: Scene) -> tuple:
@@ -42,7 +42,7 @@ def choose_group(scenes: list[Scene]) -> SceneGroup | None:
     """Group by (track, direction, frame): full coverage, then dual-pol, dates, newest, numbers."""
     groups: dict[GroupKey, list[Scene]] = defaultdict(list)
     for scene in scenes:
-        groups[_group_key(scene)].append(scene)
+        groups[_group_key(scene=scene)].append(scene)
     if not groups:
         return None
     best_key = max(groups, key=lambda key: _group_score(key=key, members=groups[key]))
@@ -54,11 +54,13 @@ def _group_score(key: GroupKey, members: list[Scene]) -> tuple:
     track, direction, frame = key
     coverage = mean(scene.coverage for scene in members)
     full = coverage >= FULL_COVERAGE
+    newest = max(members, key=lambda scene: scene.acquired_at)
+    family = newest.mode[:FREQUENCY_A_MODE_LENGTH]
     return (
         full,
         0.0 if full else coverage,
         any(len(scene.polarizations) >= 2 for scene in members),
-        len({scene.acquired_at for scene in members}),
+        len({s.acquired_at for s in members if s.mode[:FREQUENCY_A_MODE_LENGTH] == family}),
         max(scene.acquired_at for scene in members),
         -track,
         -ord(direction),

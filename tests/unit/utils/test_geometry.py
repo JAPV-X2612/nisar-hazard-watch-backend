@@ -7,6 +7,7 @@ from shapely.geometry import shape
 from nisar_hazard_watch.constants.sar import (
     AOI_SIDE_KM,
     IDEAL_NATIVE_PIXELS,
+    MAX_POLYGONS,
     MAX_VERTICES,
     AoiKind,
 )
@@ -195,3 +196,105 @@ def test_unsupported_or_malformed_geometries_are_rejected(geometry: dict) -> Non
     # Act / Assert
     with pytest.raises(expected_exception=InvalidGeometryError):
         aoi_from_geojson(geometry=payload)
+
+
+def _multi(*boxes: tuple[float, float, float, float]) -> dict:
+    parts = [[[(w, s), (e, s), (e, n), (w, n), (w, s)]] for w, s, e, n in boxes]
+    return {"type": "MultiPolygon", "coordinates": parts}
+
+
+SQUARE = (73.70, 32.30, 73.75, 32.34)
+
+
+def test_a_multipolygon_is_accepted_and_its_parts_are_summed() -> None:
+    # Arrange
+    far_apart = _multi(SQUARE, (74.00, 32.30, 74.05, 32.34))
+    single = aoi_from_geojson(geometry=_box(*SQUARE))
+
+    # Act
+    aoi = aoi_from_geojson(geometry=far_apart)
+
+    # Assert
+    assert aoi.geometry["type"] == "MultiPolygon"
+    assert aoi.area_km2 == pytest.approx(2 * single.area_km2, rel=0.01)
+
+
+def test_overlapping_parts_are_merged_so_the_area_is_not_counted_twice() -> None:
+    # Arrange
+    duplicated = _multi(SQUARE, SQUARE)
+    single = aoi_from_geojson(geometry=_box(*SQUARE))
+
+    # Act
+    aoi = aoi_from_geojson(geometry=duplicated)
+
+    # Assert
+    assert aoi.area_km2 == pytest.approx(single.area_km2, rel=0.001)
+    assert aoi.native_pixels == single.native_pixels
+
+
+def test_partially_overlapping_parts_give_their_union() -> None:
+    # Arrange
+    shifted = (73.725, 32.30, 73.775, 32.34)
+    overlapping = _multi(SQUARE, shifted)
+    single = aoi_from_geojson(geometry=_box(*SQUARE))
+
+    # Act
+    aoi = aoi_from_geojson(geometry=overlapping)
+
+    # Assert
+    assert single.area_km2 < aoi.area_km2 < 2 * single.area_km2
+    assert aoi.geometry["type"] == "Polygon"
+
+
+def test_a_self_intersecting_polygon_keeps_both_of_its_lobes() -> None:
+    # Arrange
+    bow_tie = _polygon((0.0, 0.0), (0.1, 0.1), (0.1, 0.0), (0.0, 0.1))
+    expected_km2 = 0.5 * 0.1 * 0.05 * 2 * 111.32 * 110.57
+
+    # Act
+    aoi = aoi_from_geojson(geometry=bow_tie)
+
+    # Assert
+    assert aoi.area_km2 == pytest.approx(expected_km2, rel=0.05)
+    assert aoi.geometry["type"] == "MultiPolygon"
+
+
+def test_a_polygon_touching_the_antimeridian_keeps_180_as_its_east_edge() -> None:
+    # Arrange
+    geometry = _box(179.9, 0.0, 180.0, 0.05)
+
+    # Act
+    aoi = aoi_from_geojson(geometry=geometry)
+
+    # Assert
+    assert aoi.bbox == pytest.approx((179.9, 0.0, 180.0, 0.05))
+
+
+def test_too_many_polygons_are_rejected() -> None:
+    # Arrange
+    many = _multi(*[(i * 0.01, 0.0, i * 0.01 + 0.005, 0.005) for i in range(MAX_POLYGONS + 1)])
+
+    # Act / Assert
+    with pytest.raises(expected_exception=InvalidGeometryError, match="too many polygons"):
+        aoi_from_geojson(geometry=many)
+
+
+def test_the_vertex_limit_applies_to_all_the_parts_together() -> None:
+    # Arrange
+    per_part = MAX_VERTICES // 2 + 5
+
+    def ring(offset: float) -> list:
+        points = [
+            (
+                offset + 0.004 * math.cos(2 * math.pi * i / per_part),
+                0.004 * math.sin(2 * math.pi * i / per_part),
+            )
+            for i in range(per_part)
+        ]
+        return [[*points, points[0]]]
+
+    geometry = {"type": "MultiPolygon", "coordinates": [ring(0.0), ring(0.05)]}
+
+    # Act / Assert
+    with pytest.raises(expected_exception=InvalidGeometryError, match="in total"):
+        aoi_from_geojson(geometry=geometry)

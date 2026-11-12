@@ -15,6 +15,7 @@ from nisar_hazard_watch.constants.sar import (
     IDEAL_NATIVE_PIXELS,
     MAX_NATIVE_PIXELS,
     MAX_POINT_LATITUDE,
+    MAX_POLYGONS,
     MAX_VERTICES,
     NATIVE_PIXEL_M,
     AoiKind,
@@ -56,12 +57,13 @@ def aoi_from_geojson(geometry: dict[str, Any]) -> Aoi:
     for ring in rings:
         polygon = Polygon(_unwrap_longitudes(ring=ring))
         if not polygon.is_valid:
-            polygon = polygon.buffer(0)
+            polygon = shapely.make_valid(polygon)
             warnings.append("geometry was repaired (self-intersection)")
         if polygon.is_empty or polygon.area == 0:
             raise InvalidGeometryError("the polygon has no area")
         continuous.append(polygon)
-    return _build_aoi(kind=AoiKind.POLYGON, continuous=continuous, warnings=warnings)
+    merged = shapely.unary_union(continuous)
+    return _build_aoi(kind=AoiKind.POLYGON, continuous=[merged], warnings=warnings)
 
 
 def _require_valid_point(lon: float, lat: float) -> None:
@@ -85,7 +87,17 @@ def _rings_of(geometry: dict[str, Any]) -> list[list[tuple[float, float]]]:
     if not isinstance(coordinates, list) or not coordinates:
         raise InvalidGeometryError("the geometry has no coordinates")
     polygons = coordinates if kind == "MultiPolygon" else [coordinates]
-    return [_outer_ring(polygon=polygon) for polygon in polygons]
+    if len(polygons) > MAX_POLYGONS:
+        raise InvalidGeometryError(
+            f"too many polygons ({len(polygons)}); the limit is {MAX_POLYGONS}"
+        )
+    rings = [_outer_ring(polygon=polygon) for polygon in polygons]
+    total_vertices = sum(len(ring) - 1 for ring in rings)
+    if total_vertices > MAX_VERTICES:
+        raise InvalidGeometryError(
+            f"too many vertices ({total_vertices}); the limit is {MAX_VERTICES} in total"
+        )
+    return rings
 
 
 def _outer_ring(polygon: Any) -> list[tuple[float, float]]:
@@ -151,6 +163,8 @@ def _polygons_of(geometry: BaseGeometry) -> list[Polygon]:
 
 
 def _wrap(lon: float) -> float:
+    if -HALF_TURN <= lon <= HALF_TURN:
+        return lon
     return ((lon + HALF_TURN) % FULL_TURN) - HALF_TURN
 
 

@@ -3,7 +3,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from shapely import from_wkt
+from shapely import from_wkt, make_valid
+from shapely.errors import GEOSException
 from shapely.geometry import shape
 
 from nisar_hazard_watch.adapters.asf.scene_parser import parse_scene_identity
@@ -42,8 +43,14 @@ class AsfCatalog:
                 "the list may be incomplete"
             )
         aoi_shape = from_wkt(aoi.wkt)
-        scenes = (self._to_scene(feature=f, aoi_shape=aoi_shape) for f in features)
-        return [scene for scene in scenes if scene is not None]
+        scenes = [self._to_scene(feature=f, aoi_shape=aoi_shape) for f in features]
+        usable = [scene for scene in scenes if scene is not None]
+        if features and not usable:
+            raise CatalogUnavailableError(
+                f"none of the {len(features)} catalog products could be read; "
+                "the ASF catalog format may have changed"
+            )
+        return usable
 
     async def _features(self, aoi: Aoi, start: datetime, end: datetime) -> list[dict[str, Any]]:
         params = {
@@ -70,13 +77,17 @@ class AsfCatalog:
     def _to_scene(feature: dict[str, Any], aoi_shape: Any) -> Scene | None:
         properties = feature.get("properties") or {}
         identity = parse_scene_identity(
-            scene_name=properties.get("sceneName", ""), url=properties.get("url", "")
+            scene_name=properties.get("sceneName") or "", url=properties.get("url") or ""
         )
         footprint = feature.get("geometry")
         if identity is None or not footprint:
             return None
-        shape_ = shape(footprint)
-        if not shape_.is_valid:
-            shape_ = shape_.buffer(0)
-        overlap = shape_.intersection(aoi_shape).area / aoi_shape.area
+        try:
+            shape_ = shape(footprint)
+            if not shape_.is_valid:
+                shape_ = make_valid(shape_)
+            overlap = shape_.intersection(aoi_shape).area / aoi_shape.area
+        except (ValueError, TypeError, GEOSException):
+            logger.warning("skipping %s: unreadable footprint", identity.granule_id, exc_info=True)
+            return None
         return Scene(**identity.model_dump(), coverage=round(overlap, COVERAGE_DECIMALS))

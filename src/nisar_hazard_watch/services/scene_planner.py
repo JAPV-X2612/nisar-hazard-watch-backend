@@ -53,7 +53,7 @@ class ScenePlanner:
                 aoi=aoi,
                 window_start=start,
                 window_end=end,
-                notes=["no NISAR L-band GCOV scene covers this area in the last five months"],
+                notes=["no NISAR L-band GCOV scene covers this area in the planning window"],
             )
         members = [
             scene

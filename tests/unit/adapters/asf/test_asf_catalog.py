@@ -147,3 +147,50 @@ async def test_a_network_failure_is_reported_as_an_unavailable_catalog() -> None
     # Act / Assert
     with pytest.raises(expected_exception=CatalogUnavailableError):
         await _search(transport=httpx.MockTransport(unreachable))
+
+
+async def test_a_product_with_null_fields_is_skipped_instead_of_failing_the_search() -> None:
+    # Arrange
+    body = _fixture()
+    body["features"][0]["properties"]["sceneName"] = None
+    body["features"][1]["properties"]["url"] = None
+
+    # Act
+    scenes = await _search(transport=_answering(body))
+
+    # Assert
+    assert len(scenes) == SCENE_COUNT - 2
+
+
+async def test_an_unreadable_footprint_skips_only_that_product() -> None:
+    # Arrange
+    body = _fixture()
+    body["features"][0]["geometry"] = {"type": "Polygon", "coordinates": [[[0, 0], [1, 1]]]}
+
+    # Act
+    scenes = await _search(transport=_answering(body))
+
+    # Assert
+    assert len(scenes) == SCENE_COUNT - 1
+
+
+async def test_a_catalog_whose_products_are_all_unrecognised_is_not_reported_as_empty() -> None:
+    # Arrange
+    body = _fixture()
+    for feature in body["features"]:
+        feature["properties"]["url"] = "https://example.test/new-collection/product.h5"
+
+    # Act / Assert
+    with pytest.raises(expected_exception=CatalogUnavailableError, match="format may have changed"):
+        await _search(transport=_answering(body))
+
+
+async def test_an_empty_answer_is_a_valid_empty_catalog() -> None:
+    # Arrange
+    body = {"type": "FeatureCollection", "features": []}
+
+    # Act
+    scenes = await _search(transport=_answering(body))
+
+    # Assert
+    assert scenes == []
