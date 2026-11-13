@@ -687,7 +687,7 @@ class ExplorationService:
     @staticmethod
     def _cache_key(request: ExplorationRequest, plan: ScenePlan) -> str:
         identity = {
-            "version": 1,
+            "version": 2,
             "lens": request.lens.value,
             "optical": request.optical_evidence,
             "area": plan.aoi.wkt,
