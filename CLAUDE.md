@@ -27,7 +27,7 @@ Results are diagnostic evidence, not validated classifiers. Every result carries
 - Use `gh` and `git` as `JAPV-X2612` only. The active `gh` account and the global git identity can be a company account: check `gh api user --jq .login` before pushing; never run `gh auth switch`.
 
 ## Secrets and platforms
-- Tokens live in the macOS Keychain (`nisac-earthdata-token`, `nisac-bhoonidhi-*`) and as platform secrets; never in code, logs, files, memory or chat, and never retype one from chat.
+- Tokens and keys live in the macOS Keychain (`nisac-earthdata-token`, `nisac-bhoonidhi-*`, `nisac-firms-map-key`) and as platform secrets (Railway, Vercel, Modal, GitHub); never in code, logs, files, memory or commits. When the team lead pastes one in chat or asks for it, Claude may use the value to set it as a platform secret and in the Keychain, and may read Keychain items and platform variables (`list-variables`) to configure or validate, without repeating the value in replies. Copy it exactly (one retyped character once caused a false 401) and prove it with a real call after setting it.
 - Names share the base `nisar-hazard-watch`: Railway project, services `nisar-hazard-watch-backend` and `nisar-hazard-watch-db`, bucket `nisar-hazard-watch-artifacts`; Vercel project `nisar-hazard-watch`; Modal apps `nisar-hazard-watch-ml` and `-ml-dev`.
 - Never touch or deploy anything on AWS (any account or region). Tell the team lead at once if Vercel, Modal or Railway credits run out.
 - Never create files under `docs/`; plans and notes go under `.superpowers/` or `DELETE/` (git-ignored).
