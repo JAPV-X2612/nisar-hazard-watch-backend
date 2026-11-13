@@ -14,6 +14,7 @@ from nisar_hazard_watch.constants.explorations import (
     Stage,
     StageName,
 )
+from nisar_hazard_watch.constants.fire_context import WILDFIRE_LIMITATION, FireContextStatus
 from nisar_hazard_watch.constants.sar import PlanStatus
 from nisar_hazard_watch.exceptions.catalog_errors import CatalogUnavailableError
 from nisar_hazard_watch.exceptions.exploration_errors import (
@@ -23,13 +24,15 @@ from nisar_hazard_watch.exceptions.exploration_errors import (
     SourceNotAvailableError,
 )
 from nisar_hazard_watch.exceptions.geometry_errors import InvalidGeometryError
-from nisar_hazard_watch.models.exploration import ExplorationRequest
+from nisar_hazard_watch.models.exploration import ExplorationRequest, ExplorationView
+from nisar_hazard_watch.models.fire_context import FireContext
 from nisar_hazard_watch.ports.analysis_runner import RunnerLayer, RunnerTicket
 from nisar_hazard_watch.ports.precomputed_cases import PrecomputedCase
 from nisar_hazard_watch.services.exploration_service import ExplorationService
 from tests.factories import QADIRABAD_LAT, QADIRABAD_LON, make_job, make_plan
 from tests.unit.services.conftest import (
     DEADLINE_SECONDS,
+    FakeFireContext,
     FakePlanner,
     ManualClock,
     ScriptedRunner,
@@ -593,3 +596,133 @@ async def test_coverage_describes_the_plan_without_running_anything(
     assert coverage.area_km2 == pytest.approx(104.86, abs=0.5)
     assert coverage.precomputed_case is None
     assert runner.submissions == []
+
+
+def _fire(status: FireContextStatus, detections: int | None = None) -> FireContext:
+    return FireContext(status=status, detections=detections, note="independent context")
+
+
+async def _finished_wildfire(
+    service: ExplorationService, runner: ScriptedRunner, clock: ManualClock
+) -> ExplorationView:
+    view, _ = await service.create(request=_request(lens=Lens.WILDFIRE))
+    _succeeded(runner)
+    clock.advance(30)
+    return await service.get(exploration_id=view.id)
+
+
+async def test_a_finished_wildfire_answer_carries_the_fire_context_apart_from_the_radar(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    fire = FakeFireContext(_fire(status=FireContextStatus.AVAILABLE, detections=4))
+    service = make_service(fire_context=fire)
+
+    # Act
+    done = await _finished_wildfire(service=service, runner=runner, clock=clock)
+
+    # Assert
+    assert done.result is not None
+    assert done.result.fire_context is not None
+    assert done.result.fire_context.detections == 4
+    assert done.result.lens == {"status": "evaluated"}
+    assert WILDFIRE_LIMITATION in done.result.limitations
+    assert len(fire.plans) == 1
+
+
+async def test_the_fire_context_is_saved_with_the_answer_and_asked_only_once(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    fire = FakeFireContext(_fire(status=FireContextStatus.AVAILABLE, detections=1))
+    service = make_service(fire_context=fire)
+    done = await _finished_wildfire(service=service, runner=runner, clock=clock)
+
+    # Act
+    again = await service.get(exploration_id=done.id)
+
+    # Assert
+    assert again.result is not None
+    assert again.result.fire_context is not None
+    assert again.result.fire_context.detections == 1
+    assert len(fire.plans) == 1
+
+
+async def test_other_lenses_never_ask_for_fire_context(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    fire = FakeFireContext()
+    service = make_service(fire_context=fire)
+    view, _ = await service.create(request=_request(lens=Lens.FLOOD_WETLAND))
+    _succeeded(runner)
+    clock.advance(30)
+
+    # Act
+    done = await service.get(exploration_id=view.id)
+
+    # Assert
+    assert done.result is not None
+    assert done.result.fire_context is None
+    assert WILDFIRE_LIMITATION not in done.result.limitations
+    assert fire.plans == []
+
+
+async def test_a_running_wildfire_exploration_does_not_ask_yet(
+    make_service: Factory,
+) -> None:
+    # Arrange
+    fire = FakeFireContext()
+    service = make_service(fire_context=fire)
+
+    # Act
+    view, final = await service.create(request=_request(lens=Lens.WILDFIRE))
+
+    # Assert
+    assert final is False
+    assert view.result is None
+    assert fire.plans == []
+
+
+async def test_a_cached_answer_retries_a_context_that_was_unavailable(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    fire = FakeFireContext(
+        _fire(status=FireContextStatus.UNAVAILABLE),
+        _fire(status=FireContextStatus.AVAILABLE, detections=2),
+    )
+    service = make_service(fire_context=fire)
+    first = await _finished_wildfire(service=service, runner=runner, clock=clock)
+
+    # Act
+    cached, final = await service.create(request=_request(lens=Lens.WILDFIRE))
+
+    # Assert
+    assert first.result is not None
+    assert first.result.fire_context is not None
+    assert first.result.fire_context.status is FireContextStatus.UNAVAILABLE
+    assert final is True
+    assert cached.cache is CacheState.HIT
+    assert cached.result is not None
+    assert cached.result.fire_context is not None
+    assert cached.result.fire_context.detections == 2
+    assert len(runner.submissions) == 1
+
+
+async def test_a_cached_answer_keeps_a_context_that_was_already_available(
+    make_service: Factory, runner: ScriptedRunner, clock: ManualClock
+) -> None:
+    # Arrange
+    fire = FakeFireContext(_fire(status=FireContextStatus.AVAILABLE, detections=3))
+    service = make_service(fire_context=fire)
+    await _finished_wildfire(service=service, runner=runner, clock=clock)
+
+    # Act
+    cached, _ = await service.create(request=_request(lens=Lens.WILDFIRE))
+
+    # Assert
+    assert cached.result is not None
+    assert cached.result.fire_context is not None
+    assert cached.result.fire_context.detections == 3
+    assert len(fire.plans) == 1

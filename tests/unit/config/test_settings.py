@@ -119,6 +119,7 @@ def test_blank_secrets_count_as_missing(monkeypatch: pytest.MonkeyPatch, blank: 
     # Arrange
     monkeypatch.setenv(name="EARTHDATA_TOKEN", value=blank)
     monkeypatch.setenv(name="MODAL_TOKEN_ID", value=blank)
+    monkeypatch.setenv(name="FIRMS_MAP_KEY", value=blank)
 
     # Act
     settings = Settings()
@@ -126,6 +127,7 @@ def test_blank_secrets_count_as_missing(monkeypatch: pytest.MonkeyPatch, blank: 
     # Assert
     assert settings.earthdata_token is None
     assert settings.modal_token_id is None
+    assert settings.firms_map_key is None
 
 
 def test_the_log_level_is_accepted_in_any_case(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,3 +244,19 @@ def test_exploration_limits_must_be_positive(monkeypatch: pytest.MonkeyPatch, na
     # Act / Assert
     with pytest.raises(expected_exception=ValidationError):
         Settings()
+
+
+def test_the_firms_key_is_a_secret_and_the_service_defaults_to_nasa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.setenv(name="FIRMS_MAP_KEY", value=SECRET_VALUE)
+
+    # Act
+    settings = Settings()
+
+    # Assert
+    assert settings.firms_map_key is not None
+    assert settings.firms_map_key.get_secret_value() == SECRET_VALUE
+    assert SECRET_VALUE not in repr(settings)
+    assert settings.firms_url == "https://firms.modaps.eosdis.nasa.gov"

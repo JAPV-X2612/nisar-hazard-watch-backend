@@ -83,3 +83,24 @@ def test_configure_logging_installs_one_json_handler_at_the_requested_level() ->
     assert len(installed) == 1
     assert isinstance(installed[0].formatter, JsonFormatter)
     assert level == logging.WARNING
+
+
+def test_http_client_loggers_stay_quiet_because_urls_may_carry_a_key() -> None:
+    # Arrange
+    root = logging.getLogger()
+    previous_handlers, previous_level = root.handlers, root.level
+    loggers = [logging.getLogger(name) for name in ("httpx", "httpcore")]
+    previous_levels = [logger.level for logger in loggers]
+
+    # Act
+    try:
+        configure_logging(level=LogLevel.INFO)
+        levels = [logger.getEffectiveLevel() for logger in loggers]
+    finally:
+        root.handlers = previous_handlers
+        root.setLevel(previous_level)
+        for logger, level in zip(loggers, previous_levels, strict=True):
+            logger.setLevel(level)
+
+    # Assert
+    assert levels == [logging.WARNING, logging.WARNING]
