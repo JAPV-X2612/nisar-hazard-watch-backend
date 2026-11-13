@@ -1,4 +1,5 @@
 import logging
+import re
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
@@ -8,6 +9,8 @@ import httpx
 from nisar_hazard_watch.constants.explorations import (
     GATEWAY_OPERATION,
     OBSERVED_STATUS,
+    REGIONAL_ANALYSES,
+    REGIONAL_OPERATION,
     GatewayCache,
     GatewayErrorCode,
     GatewayStatus,
@@ -23,6 +26,13 @@ from nisar_hazard_watch.exceptions.exploration_errors import QueueFullError, Run
 from nisar_hazard_watch.exceptions.pair_errors import InvalidPairError
 from nisar_hazard_watch.models.insar_summary import InsarSummary
 from nisar_hazard_watch.models.scene import Scene
+from nisar_hazard_watch.models.science_products import (
+    PublishedAsset,
+    RadarVisualization,
+    RegionalAnalysis,
+    SciencePreview,
+    ScienceProducts,
+)
 from nisar_hazard_watch.ports.analysis_runner import (
     RunnerJob,
     RunnerLayer,
@@ -35,6 +45,8 @@ from nisar_hazard_watch.utils.gunw import pair_dates
 logger = logging.getLogger(__name__)
 
 JOBS_PATH = "/v2/jobs"
+ASSET_NAME = re.compile(r"[A-Za-z0-9._-]{1,180}")
+OBSERVATION_LAYER = re.compile(r"display_(\d{4}-\d{2}-\d{2})_(?:[A-Z]+|\d+)")
 BUSY_STATUSES = (HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE)
 UNEXPECTED_ANSWER = "the analysis service answered unexpectedly"
 STATE_BY_GATEWAY_STATUS = {
@@ -51,9 +63,11 @@ COLLECTION_BY_MATURITY = {
 URGENT_RESPONSE_COLLECTION = "UR"
 LAYER_KINDS = (
     ("display_baseline_change", LayerKind.CHANGE),
+    ("display_change_", LayerKind.CHANGE),
     ("display_flood_signature", LayerKind.DIAGNOSTIC),
     ("display_agriculture", LayerKind.DIAGNOSTIC),
     ("display_cross_pol_pattern", LayerKind.DIAGNOSTIC),
+    ("display_cross_pol_decline_count", LayerKind.DIAGNOSTIC),
     ("display_coherence", LayerKind.COHERENCE),
     ("display_wrapped_phase", LayerKind.PHASE),
     ("display_optical", LayerKind.DIAGNOSTIC),
@@ -103,6 +117,17 @@ class GatewayRunner:
     def _body(self, job: RunnerJob) -> dict[str, Any]:
         aoi = job.plan.aoi
         longitude, latitude = aoi_center(aoi=aoi)
+        if job.regional_analysis:
+            assert job.plan.group is not None
+            return {
+                "operation": REGIONAL_OPERATION,
+                "longitude": round(longitude, 5),
+                "latitude": round(latitude, 5),
+                "start_date": job.plan.window_start.date().isoformat(),
+                "end_date": job.plan.window_end.date().isoformat(),
+                "series_key": job.plan.group.series_key,
+                "analyses": list(REGIONAL_ANALYSES),
+            }
         if job.lens is Lens.INSAR and job.pair is not None:
             return {
                 "operation": INSAR_OPERATION,
@@ -168,41 +193,86 @@ class GatewayRunner:
         state = STATE_BY_GATEWAY_STATUS[payload["status"]]
         error = payload.get("error") or {}
         result = None
+        run_id = str(payload.get("job_id", ""))
         if state is RunnerState.SUCCEEDED and payload.get("result"):
-            result = self._result(payload["result"])
+            result = self._result(payload["result"], run_id=run_id)
         return RunnerTicket(
-            run_id=str(payload.get("job_id", "")),
+            run_id=run_id,
             state=state,
             cached=payload.get("cache") == GatewayCache.HIT.value,
             result=result,
             error_code=error.get("code") if state is RunnerState.FAILED else None,
         )
 
-    def _result(self, result: dict[str, Any]) -> RunnerResult:
+    def _result(self, result: dict[str, Any], run_id: str) -> RunnerResult:
+        products = self._products(result=result, run_id=run_id)
         if result.get("operation") == INSAR_OPERATION:
-            return self._insar_result(result)
+            return self._insar_result(result=result, products=products)
         science = result.get("science") or {}
         timings = {key: float(value) for key, value in (science.get("timings") or {}).items()}
         timings[TimingKey.ELAPSED.value] = float(result.get("elapsed_seconds", 0.0))
         timings[TimingKey.RENDER.value] = float(result.get("visualization_seconds", 0.0))
-        lens = science.get("lens")
-        window = ((lens or {}).get("radar") or {}).get("grid") or {}
+        lens = science.get("lens") or {}
+        window = (lens.get("radar") or {}).get("grid") or {}
+        comparison = science.get("comparison") or {}
+        regional = products.analysis if products else None
+        observations = [] if regional else science.get("observations") or []
+        grids = {row["date"]: row.get("grid") for row in observations}
+        layers = []
+        for layer in result.get("layers") or []:
+            identifier = layer["id"]
+            date_match = OBSERVATION_LAYER.fullmatch(identifier)
+            if date_match:
+                day = date_match[1]
+                layers.append(self._layer(layer, grid=grids.get(day), dates=[day]))
+            elif identifier.startswith("display_change_"):
+                layers.append(
+                    self._layer(layer, grid=comparison.get("grid"), dates=comparison.get("dates"))
+                )
+            elif identifier.startswith("display_optical"):
+                evidence = lens.get("evidence") or {}
+                epochs = evidence.get("epochs") or {}
+                dates = (
+                    [
+                        epoch["date"]
+                        for epoch in epochs.values()
+                        if isinstance(epoch, dict) and "date" in epoch
+                    ]
+                    if isinstance(epochs, dict)
+                    else []
+                )
+                layers.append(self._layer(layer, grid=evidence.get("grid"), dates=dates))
+            elif _layer_kind(identifier) in {LayerKind.CHANGE, LayerKind.DIAGNOSTIC} and not (
+                identifier.startswith("display_optical") or regional
+            ):
+                dates = lens.get("assessment_dates")
+                if identifier.startswith("display_baseline_change") and lens.get("target_date"):
+                    dates = [lens["target_date"]]
+                layers.append(self._layer(layer, grid=window or None, dates=dates))
+            else:
+                layers.append(self._layer(layer))
         return RunnerResult(
             science_status=str(result.get("science_status") or science.get("status") or "unknown"),
-            lens=lens,
-            observations=[self._observation(row) for row in science.get("observations") or []],
+            lens=lens or None,
+            observations=[self._observation(row) for row in observations],
             aoi_summary=science.get("aoi_summary"),
-            layers=[self._layer(layer) for layer in result.get("layers") or []],
+            layers=layers,
             quality={
                 "revision": result.get("revision"),
                 "gridWidth": window.get("width"),
                 "gridHeight": window.get("height"),
                 "postingMeters": window.get("pixel_spacing_m"),
+                "measuredPoint": result.get("point"),
+                "seriesKey": science.get("series_key"),
+                "comparison": self._comparison(science.get("comparison")),
             },
             timings=timings,
+            products=products,
         )
 
-    def _insar_result(self, result: dict[str, Any]) -> RunnerResult:
+    def _insar_result(
+        self, result: dict[str, Any], products: ScienceProducts | None
+    ) -> RunnerResult:
         science = result.get("science") or {}
         timings = {
             TimingKey.ELAPSED.value: float(result.get("elapsed_seconds", 0.0)),
@@ -217,19 +287,25 @@ class GatewayRunner:
         point = science.get("point") or {}
         status = str(result.get("science_status") or science.get("status") or "unknown")
         measured = status in (ScienceStatus.COMPLETE.value, ScienceStatus.PARTIAL.value)
+        observations = self._pair_observations(science=science) if measured else []
         return RunnerResult(
             science_status=status,
             lens=None,
-            observations=self._pair_observations(science=science) if measured else [],
+            observations=observations,
             aoi_summary=None,
-            layers=[self._layer(layer) for layer in result.get("layers") or []],
+            layers=[
+                self._layer(layer, grid=grid or None, dates=[row["date"] for row in observations])
+                for layer in result.get("layers") or []
+            ],
             quality={
                 "revision": result.get("revision"),
                 "gridWidth": grid.get("width"),
                 "gridHeight": grid.get("height"),
                 "postingMeters": spacing[0],
+                "measuredPoint": result.get("point"),
             },
             timings=timings,
+            products=products,
             insar=InsarSummary(
                 pair_id=str(science.get("pair_id", "")),
                 status=status,
@@ -263,10 +339,85 @@ class GatewayRunner:
 
     @staticmethod
     def _observation(row: dict[str, Any]) -> dict[str, Any]:
-        keys = ("date", "status", "reason", "granule_id")
+        keys = (
+            "date",
+            "status",
+            "reason",
+            "granule_id",
+            "granule_title",
+            "sensing_start_utc",
+            "grid",
+            "point_db",
+            "valid_pixel_count_by_pol",
+        )
         return {key: row[key] for key in keys if key in row}
 
-    def _layer(self, layer: dict[str, Any]) -> RunnerLayer:
+    @staticmethod
+    def _comparison(comparison: dict[str, Any] | None) -> dict[str, Any] | None:
+        if comparison is None:
+            return None
+        return {key: comparison[key] for key in ("status", "dates", "reason") if key in comparison}
+
+    def _products(self, result: dict[str, Any], run_id: str) -> ScienceProducts | None:
+        if not any(key in result for key in ("visualizations", "artifacts", "previews")) and (
+            result.get("operation") != REGIONAL_OPERATION
+        ):
+            return None
+        assets: dict[str, PublishedAsset] = {}
+        for asset in result.get("artifacts") or []:
+            name, href = asset["name"], asset["href"]
+            if name in {".", ".."} or not ASSET_NAME.fullmatch(name):
+                continue
+            path = f"{JOBS_PATH}/{quote(run_id, safe='')}/layers/{name}"
+            url = self._layer_url(path=href)
+            if urlsplit(url).path != path or urlsplit(url).query or urlsplit(url).fragment:
+                continue
+            assets[href] = PublishedAsset(
+                name=name,
+                url=url,
+                media_type=asset["media_type"],
+                bytes=asset["bytes"],
+                sha256=asset["sha256"],
+            )
+        visualizations = [
+            RadarVisualization.model_validate(
+                {
+                    **view,
+                    "png": assets[view["png_url"]].name,
+                    "cog": assets[view["cog_url"]].name if view.get("cog_url") in assets else None,
+                }
+            )
+            for view in result.get("visualizations") or []
+            if view["png_url"] in assets
+        ]
+        previews = [
+            SciencePreview.model_validate({**preview, "name": assets[preview["href"]].name})
+            for preview in result.get("previews") or []
+            if preview["href"] in assets
+        ]
+        regional = None
+        if result.get("operation") == REGIONAL_OPERATION:
+            science = result.get("science") or {}
+            regional = RegionalAnalysis(
+                point=result.get("point"),
+                observations=science.get("observations") or {},
+                capabilities=science.get("capabilities") or {},
+                series=(science.get("dashboard") or {}).get("series") or {},
+                limitations=science.get("limitations") or [],
+            )
+        return ScienceProducts(
+            assets=list(assets.values()),
+            visualizations=visualizations,
+            previews=previews,
+            analysis=regional,
+        )
+
+    def _layer(
+        self,
+        layer: dict[str, Any],
+        grid: dict[str, Any] | None = None,
+        dates: list[str] | None = None,
+    ) -> RunnerLayer:
         identifier = str(layer["id"])
         value_range = layer.get("range")
         return RunnerLayer(
@@ -279,4 +430,7 @@ class GatewayRunner:
             url=self._layer_url(path=str(layer["png_url"])),
             legend=layer.get("legend"),
             value_range=tuple(value_range) if value_range else None,
+            crs=layer.get("crs"),
+            grid=grid,
+            dates=dates,
         )

@@ -219,7 +219,7 @@ def test_the_synthetic_runner_is_refused_in_production(monkeypatch: pytest.Monke
 
 def test_exploration_settings_default_to_the_gateway_and_the_agreed_limits() -> None:
     # Arrange
-    expected_deadline = 180.0
+    expected_deadline = 480.0
     expected_eta_prior = 140.0
 
     # Act

@@ -20,9 +20,8 @@ DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml.us-east.modal
 DEFAULT_FIRMS_URL = "https://firms.modaps.eosdis.nasa.gov"
 # Railway's edge appends two entries (measured 2026-11-12): the client is second from the right.
 DEFAULT_TRUSTED_PROXY_HOPS = 2
-# Measured 2026-11-12: a fresh area takes 47 to 147 s (reading the scenes dominates); the worker
-# itself may run 240 s. A shorter deadline answered `partial` for jobs that finished a minute later.
-DEFAULT_EXPLORATION_DEADLINE_SECONDS = 180.0
+# The production worker can run for 420 s. Allow time for gateway admission and startup.
+DEFAULT_EXPLORATION_DEADLINE_SECONDS = 480.0
 DEFAULT_ETA_PRIOR_SECONDS = 140.0
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
 SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret", "firms_map_key")

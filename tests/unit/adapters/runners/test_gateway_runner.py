@@ -119,6 +119,82 @@ async def test_a_succeeded_job_becomes_a_typed_result_with_absolute_layer_urls()
     assert observed.value_range == (-30.0, 0.0)
 
 
+async def test_regional_job_keeps_its_own_sample_and_only_published_assets() -> None:
+    # Arrange
+    prefix = f"/v2/jobs/{RUN_ID}/layers"
+    asset = f"{prefix}/spectral.png"
+    body = {
+        "job_id": RUN_ID,
+        "status": "succeeded",
+        "result": {
+            "operation": "analysis",
+            "science_status": "partial",
+            "point": [1, 2],
+            "artifacts": [
+                {
+                    "name": "spectral.png",
+                    "href": asset,
+                    "media_type": "image/png",
+                    "bytes": 200,
+                    "sha256": "1" * 64,
+                },
+                {
+                    "name": "external.png",
+                    "href": "/v2/jobs/another-job/layers/external.png",
+                    "media_type": "image/png",
+                    "bytes": 200,
+                    "sha256": "2" * 64,
+                },
+            ],
+            "previews": [
+                {"href": asset, "title": "Spectrum", "interpretation": "experimental"},
+                {"href": f"{prefix}/missing.png", "title": "Missing", "interpretation": "none"},
+            ],
+            "science": {
+                "observations": {"dates": ["2026-07-01", "2026-07-13"], "grid": {}},
+                "dashboard": {"series": {"spectral_series": [{"period_days": 24.0, "HH": None}]}},
+            },
+        },
+    }
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=200, json=body)
+
+    # Act
+    ticket = await _run(handler, lambda runner: runner.poll(run_id=RUN_ID))
+
+    # Assert
+    assert ticket.result is not None
+    assert ticket.result.observations == []
+    products = ticket.result.products
+    assert products is not None
+    assert [preview.name for preview in products.previews] == ["spectral.png"]
+    assert [asset.url for asset in products.assets] == [BASE_URL + asset]
+    assert products.analysis is not None
+    assert products.analysis.point == (1, 2)
+    assert products.analysis.series["spectral_series"] == [{"period_days": 24.0, "HH": None}]
+
+
+async def test_regional_submission_uses_the_parent_series_and_window() -> None:
+    # Arrange
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(status_code=202, json={"job_id": RUN_ID, "status": "queued"})
+
+    # Act
+    await _run(handler, lambda runner: runner.submit(job=_job(regional_analysis=True)))
+
+    # Assert
+    body = json.loads(sent[0].content)
+    assert body["operation"] == "analysis"
+    assert body["series_key"] == "084_A_018_4005_DHDH"
+    assert body["analyses"] == ["physical", "spectral", "stochastic"]
+    assert "aoi" not in body
+    assert "scenes" not in body
+
+
 @pytest.mark.parametrize(
     argnames=("gateway_status", "expected"),
     argvalues=[("queued", RunnerState.QUEUED), ("running", RunnerState.RUNNING)],

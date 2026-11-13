@@ -73,7 +73,7 @@ def test_a_point_next_to_the_antimeridian_is_split_without_losing_area() -> None
     assert aoi.area_km2 == pytest.approx(EXPECTED_SQUARE_KM2, abs=AREA_TOLERANCE_KM2)
 
 
-@pytest.mark.parametrize(argnames="lat", argvalues=[85.0, -85.0, 91.0])
+@pytest.mark.parametrize(argnames="lat", argvalues=[90.0, -90.0, 91.0])
 def test_points_outside_the_supported_latitudes_are_rejected(lat: float) -> None:
     # Arrange
     lon = 0.0
@@ -81,6 +81,19 @@ def test_points_outside_the_supported_latitudes_are_rejected(lat: float) -> None
     # Act / Assert
     with pytest.raises(expected_exception=InvalidGeometryError):
         aoi_from_point(lon=lon, lat=lat)
+
+
+@pytest.mark.parametrize(argnames="lat", argvalues=[85.0, -85.0, 89.9, -89.9])
+def test_polar_point_preserves_the_clicked_location(lat: float) -> None:
+    # Arrange
+    lon = 179.98
+
+    # Act
+    aoi = aoi_from_point(lon=lon, lat=lat)
+
+    # Assert
+    assert aoi_center(aoi=aoi) == (lon, lat)
+    assert aoi.area_km2 == pytest.approx(EXPECTED_SQUARE_KM2, abs=2.0)
 
 
 def test_a_rectangle_crossing_the_antimeridian_is_split_and_measured_on_the_sphere() -> None:
