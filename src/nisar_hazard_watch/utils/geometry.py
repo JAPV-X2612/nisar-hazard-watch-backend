@@ -54,6 +54,12 @@ def aoi_from_point(lon: float, lat: float) -> Aoi:
     corners_y = [y - radius, y - radius, y + radius, y + radius]
     lons, lats = to_geographic.transform(corners_x, corners_y)
     ring = list(zip(lons, lats, strict=True))
+    if lat > UTM_NORTH_LIMIT or lat < UTM_SOUTH_LIMIT:
+        # Densify before transforming because longitude changes rapidly across polar edges.
+        edge = shapely.segmentize(Polygon(zip(corners_x, corners_y, strict=True)), 500)
+        edge_x, edge_y = edge.exterior.xy
+        lons, lats = to_geographic.transform(edge_x, edge_y)
+        ring = list(zip(lons[:-1], lats[:-1], strict=True))
     square = Polygon(_unwrap_longitudes(ring=[*ring, ring[0]]))
     return _build_aoi(kind=AoiKind.POINT, continuous=[square], warnings=[]).model_copy(
         update={"point": (lon, lat)}
