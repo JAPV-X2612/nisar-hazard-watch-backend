@@ -32,15 +32,19 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `ML_GATEWAY_URL` | `https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run` | Modal gateway that runs the analysis of a scene plan (the production app `nisar-hazard-watch-ml`, deployed from `main` of `NISAR-Modeling`) |
 | `RUNNER` | `gateway` | `gateway`, or `inProcess` (synthetic results labelled as demo; refused in production) |
 | `MAX_ACTIVE_EXPLORATIONS` | `5` | Explorations running at once; more get `503 QUEUE_FULL` |
-| `EXPLORATION_DEADLINE_SECONDS` | `55` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL` |
+| `EXPLORATION_DEADLINE_SECONDS` | `180` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL`. Fresh areas measured 117 s to 152 s end to end (about 100 s of it reading the scenes), cached areas answer at once, and the worker may run 240 s |
 | `EXPLORATION_CACHE_TTL_SECONDS` | `86400` | A finished exploration with the same lens, area and scenes is reused for this long |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Requests per client to the exploration and coverage endpoints |
 | `TRUSTED_PROXY_HOPS` | `2` | Entries the proxies in front of the API append to `X-Forwarded-For` (measured on Railway's edge: 2; with 1 every request landed in a different bucket and the limit never fired; recount if another proxy such as a Vercel rewrite is added). The client is that many entries from the right, so a spoofed leading address cannot dodge the limit; `0` ignores the header and uses the socket peer |
-| `ETA_PRIOR_SECONDS` | `60` | ETA until three comparable runs exist; then the p80 of the last 50 |
+| `ETA_PRIOR_SECONDS` | `140` | ETA until three comparable runs exist; then the p80 of the last 50 |
 | `ASF_TIMEOUT_SECONDS`, `GATEWAY_TIMEOUT_SECONDS` | `30`, `20` | HTTP timeouts towards the ASF catalog and the ML gateway (> 0) |
+| `GEOCODER_URL`, `GEOCODER_TIMEOUT_SECONDS` | Nominatim `/search`, `8` | Place search provider (only this host is ever called; never taken from a request) and its timeout (> 0) |
 | `PRECOMPUTED_CASES_PATH` | unset | JSON list of precomputed cases offered when the catalog is down |
 | `EARTHDATA_TOKEN` | unset | Reported as configured or not (blank counts as missing); never logged or returned |
 | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | unset | Both are needed to count as configured; never logged or returned |
+| `FIRMS_MAP_KEY` | unset | Free NASA FIRMS key for the wildfire lens' independent fire context; without it the wildfire answer says `notConfigured` and stays radar-only. It travels in the FIRMS URL path, so `httpx` request logging is silenced; never logged or returned |
+| `FIRMS_URL` | `https://firms.modaps.eosdis.nasa.gov` | FIRMS base URL |
+| `FIRMS_TIMEOUT_SECONDS`, `FIRE_CONTEXT_TIMEOUT_SECONDS` | `10`, `15` | Per-request timeout and total budget of the fire context lookup (> 0); a slower lookup is reported as `unavailable`, never as an error |
 
 ## API
 
@@ -52,6 +56,7 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `GET /api/v1/explorations/{id}` | Status, stage, per-stage seconds, `etaSeconds` and `etaRemainingSeconds`, progress, the scene plan and, when done, the result with its layers, limitations and `scientificStatus` |
 | `DELETE /api/v1/explorations/{id}` | Cancel a running exploration |
 | `GET /api/v1/explorations/{id}/layers/{layerId}` | `307` redirect to the layer image on the ML gateway |
+| `GET /api/v1/places?q=&limit=` | Place search for the globe (OpenStreetMap Nominatim behind a 24 h cache and a one-request-per-second throttle, as its policy asks; send it on submit, never per keystroke). Answers `places[]` with `point`, `bbox` and `attribution` |
 | `GET /api/v1/lenses` | The supported lenses and how many dates they need |
 | `GET /api/v1/insar/pairs?lon=&lat=&startDate=&endDate=` | NISAR L-band interferometric (GUNW) pairs over a point, newest first, listed from the public catalog through the ML gateway (default window: the last 180 days, at most 366). Rate-limited like explorations |
 | `GET /api/v1/coverage?lon=&lat=` | The scene plan for a point without running anything |
@@ -72,7 +77,7 @@ src/nisar_hazard_watch/
   api/          app factory, composition root, middlewares (request id, unexpected errors), error handlers, routes/<resource>/
   services/     use cases: HealthService, ScenePlanner (and scene_selection), ExplorationService, EtaEstimator, lens_catalog
   ports/        interfaces the services depend on (DependencyProbe, SarCatalog, AnalysisRunner, JobRepository, PrecomputedCases)
-  adapters/     implementations: db/ (jobs), nasa/ (CMR health), asf/ (scene catalog), runners/ (ML gateway, in-process), cases/, credentials/
+  adapters/     implementations: db/ (jobs), nasa/ (CMR health), asf/ (scene catalog), geocoding/ (Nominatim), runners/ (ML gateway, in-process), cases/, credentials/
   models/       camelCase DTOs (CamelModel), problem details, health
   constants/    routes, headers, reason codes, enums: no magic strings
   config/       settings (pydantic-settings)
@@ -96,7 +101,7 @@ tests/          unit/ (mirrors src), integration/ (Postgres), live/ (NASA)
 
 ## Exploration flow
 
-`POST /api/v1/explorations` validates the area (`INVALID_GEOMETRY`, `AREA_TOO_LARGE`), refuses `source: "S"` (`SOURCE_NOT_AVAILABLE`: S-band will arrive as a precomputed layer), plans the scenes with `ScenePlanner`, and answers from the cache when the same lens, area and granules finished in the last day. Otherwise it checks capacity (`QUEUE_FULL`), hands the plan to the runner and stores the job. The default runner posts it to the Modal gateway of `NISAR-Modeling`, which reads the planned windows (up to 10.24 km at 10 m), runs the lens and serves the layers; polling `GET /explorations/{id}` refreshes the job from the gateway. Failures are explicit: no scenes is a final `noData` answer with `NO_COVERAGE` or `INSUFFICIENT_HISTORY`; a catalog outage is `502 UPSTREAM_CATALOG_ERROR` (and names a precomputed case when one matches); an exploration past the deadline is `partial` with `TIMEOUT_PARTIAL`. Every result carries `limitations[]`, `scientificStatus: "diagnostic"` and `isDemo`; an area wider than the analysed window says so in `limitations` and `quality.windowTruncated`. The `insar` lens takes a pair chosen from `GET /api/v1/insar/pairs` instead of a GCOV scene plan (the planner is skipped): the backend reads the pair's two days from its granule name, sends `insar-pair` to the gateway and returns `result.insar` (median coherence, coherent and phase cells, coherence and wrapped phase at the point) with two layers, coherence and wrapped phase (cyclic palette). The phase is wrapped and not corrected for troposphere or ionosphere, so `losDisplacementCm` is always `null` and every answer says so. Measured on 2026-11-12 (Kumamoto, track 24, 2026-07-21 to 2026-08-14): 50 s, 62,500 coherent cells in the 5 km window, 39,584 with phase at the 0.35 threshold. Measured on 2026-11-12 (Qadirabad, five scenes, 1024 × 1024 cells): about 35 s of analysis plus rendering once warm, 47 s from a cold start.
+`POST /api/v1/explorations` validates the area (`INVALID_GEOMETRY`, `AREA_TOO_LARGE`), refuses `source: "S"` (`SOURCE_NOT_AVAILABLE`: S-band will arrive as a precomputed layer), plans the scenes with `ScenePlanner`, and answers from the cache when the same lens, area and granules finished in the last day. Otherwise it checks capacity (`QUEUE_FULL`), hands the plan to the runner and stores the job. The default runner posts it to the Modal gateway of `NISAR-Modeling`, which reads the planned windows (up to 10.24 km at 10 m), runs the lens and serves the layers; polling `GET /explorations/{id}` refreshes the job from the gateway. Failures are explicit: no scenes is a final `noData` answer with `NO_COVERAGE` or `INSUFFICIENT_HISTORY`; a catalog outage is `502 UPSTREAM_CATALOG_ERROR` (and names a precomputed case when one matches); an exploration past the deadline is `partial` with `TIMEOUT_PARTIAL`. Every result carries `limitations[]`, `scientificStatus: "diagnostic"` and `isDemo`; an area wider than the analysed window says so in `limitations` and `quality.windowTruncated`. A `wildfire` answer also carries `result.fireContext`, kept apart from the radar `lens`: NASA FIRMS VIIRS active-fire detections (SNPP and NOAA-20, archive and near real time, de-duplicated) inside the area between the last baseline pass and the target pass, low-confidence ones counted separately; it is `available`, `unavailable` (FIRMS failed or was slow) or `notConfigured`, and never reports a cause or a burned area. It lives in `hazards/wildfire/`. The `insar` lens takes a pair chosen from `GET /api/v1/insar/pairs` instead of a GCOV scene plan (the planner is skipped): the backend reads the pair's two days from its granule name, sends `insar-pair` to the gateway and returns `result.insar` (median coherence, coherent and phase cells, coherence and wrapped phase at the point) with two layers, coherence and wrapped phase (cyclic palette). The phase is wrapped and not corrected for troposphere or ionosphere, so `losDisplacementCm` is always `null` and every answer says so. Measured on 2026-11-12 (Kumamoto, track 24, 2026-07-21 to 2026-08-14): 50 s, 62,500 coherent cells in the 5 km window, 39,584 with phase at the 0.35 threshold. Measured on 2026-11-12 (Qadirabad, five scenes, 1024 × 1024 cells): about 35 s of analysis plus rendering once warm, 47 s from a cold start.
 
 ## Testing
 

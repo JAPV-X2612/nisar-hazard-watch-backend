@@ -21,6 +21,7 @@ from nisar_hazard_watch.constants.insar import (
 )
 from nisar_hazard_watch.constants.sar import Configuration, Direction, Maturity, PlanStatus
 from nisar_hazard_watch.models.base_model import CamelModel
+from nisar_hazard_watch.models.fire_context import FireContext
 from nisar_hazard_watch.models.insar_summary import InsarSummary
 
 
@@ -115,6 +116,7 @@ class ExplorationResult(CamelModel):
     timings: dict[str, float]
     is_demo: bool = False
     insar: InsarSummary | None = None
+    fire_context: FireContext | None = None
 
 
 class ExplorationView(CamelModel):

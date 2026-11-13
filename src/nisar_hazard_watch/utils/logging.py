@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from nisar_hazard_watch.constants.log_levels import LogLevel
 from nisar_hazard_watch.utils.request_context import request_id_var
 
+# httpx logs every request URL at INFO and the FIRMS key is part of its path.
+QUIET_LOGGERS = ("httpx", "httpcore")
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -29,3 +32,5 @@ def configure_logging(level: LogLevel) -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level.value)
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)

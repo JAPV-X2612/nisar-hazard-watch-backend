@@ -32,6 +32,7 @@ from nisar_hazard_watch.constants.explorations import (
     StageState,
     TimingKey,
 )
+from nisar_hazard_watch.constants.fire_context import WILDFIRE_LIMITATION, FireContextStatus
 from nisar_hazard_watch.constants.insar import (
     INSAR_FAILURE_DETAILS,
     INSAR_LIMITATIONS,
@@ -71,6 +72,7 @@ from nisar_hazard_watch.ports.analysis_runner import (
     RunnerResult,
     RunnerTicket,
 )
+from nisar_hazard_watch.ports.fire_context_provider import FireContextProvider
 from nisar_hazard_watch.ports.job_repository import ExplorationJob, JobRepository
 from nisar_hazard_watch.ports.precomputed_cases import PrecomputedCases
 from nisar_hazard_watch.services.eta_estimator import EtaEstimator
@@ -117,6 +119,7 @@ class ExplorationService:
         max_active: int,
         deadline_seconds: float,
         cache_ttl_seconds: float,
+        fire_context: FireContextProvider | None = None,
         clock: Callable[[], datetime] = _utc_now,
         timer: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -128,6 +131,7 @@ class ExplorationService:
         self._max_active = max_active
         self._deadline_seconds = deadline_seconds
         self._cache_ttl_seconds = cache_ttl_seconds
+        self._fire_context = fire_context
         self._clock = clock
         self._timer = timer
 
@@ -161,6 +165,7 @@ class ExplorationService:
             cache_key=cache_key, newer_than=now - timedelta(seconds=self._cache_ttl_seconds)
         )
         if fresh is not None:
+            fresh = await self._with_fire_context(job=fresh)
             return await self._view(job=fresh, cache=CacheState.HIT), True
         await self._repository.expire_overdue(now=now, error=self._timeout_error())
         await self._require_capacity(
@@ -194,7 +199,7 @@ class ExplorationService:
             created_at=now,
             deadline_at=now + timedelta(seconds=self._deadline_seconds),
         )
-        job = self._apply(job=job, ticket=ticket, now=now)
+        job = await self._with_fire_context(job=self._apply(job=job, ticket=ticket, now=now))
         await self._repository.add(job=job)
         return await self._view(job=job), job.status not in ACTIVE_STATUSES
 
@@ -351,6 +356,7 @@ class ExplorationService:
             logger.warning("polling %s failed; keeping its last state", job.id, exc_info=True)
             ticket = None
         updated = self._apply(job=job, ticket=ticket, now=now) if ticket else job
+        updated = await self._with_fire_context(job=updated)
         if updated.status in ACTIVE_STATUSES and now > updated.deadline_at:
             updated = updated.model_copy(
                 update={
@@ -365,6 +371,21 @@ class ExplorationService:
         if await self._repository.transition(job=updated):
             return updated
         return await self._load(exploration_id=job.id)
+
+    async def _with_fire_context(self, job: ExplorationJob) -> ExplorationJob:
+        """Wildfire answers carry independent fire evidence next to the radar, never inside it."""
+        result = job.result
+        if self._fire_context is None or job.lens is not Lens.WILDFIRE or result is None:
+            return job
+        if job.plan is None:
+            return job
+        known = result.fire_context
+        if known is not None and known.status is FireContextStatus.AVAILABLE:
+            return job
+        context = await self._fire_context.fire_context(plan=job.plan)
+        return job.model_copy(
+            update={"result": result.model_copy(update={"fire_context": context})}
+        )
 
     def _timeout_error(self) -> ProblemInfo:
         return ProblemInfo(
@@ -447,6 +468,7 @@ class ExplorationService:
             },
             limitations=[
                 *(INSAR_LIMITATIONS if insar else LIMITATIONS),
+                *([WILDFIRE_LIMITATION] if job.lens is Lens.WILDFIRE else []),
                 *([INSAR_WINDOW_LIMITATION if insar else WINDOW_LIMITATION] if truncated else []),
             ],
             scientific_status=SCIENTIFIC_STATUS,

@@ -1,10 +1,12 @@
 import json
 from collections.abc import Callable, Iterator
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 
 from nisar_hazard_watch.adapters.db.models import Base
@@ -25,6 +27,12 @@ HUGE_POLYGON = {
 }
 BODY = {"lens": "flood_wetland", "geometry": POINT}
 URL = "/api/v1/explorations"
+FIRMS_KEY = "a-firms-map-key"
+FIRMS_HEADER = (
+    "latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,"
+    "version,bright_ti5,frp,daynight"
+)
+WILDFIRE_BODY = {"lens": "wildfire", "geometry": POINT}
 LONG_RUN_SECONDS = 10_000
 FORWARDED_FOR = "X-Forwarded-For"
 EDGE_HOP = "100.64.0.1"
@@ -46,6 +54,7 @@ def start_api(
     def start(
         runner: InProcessRunner | None = None,
         asf: httpx.MockTransport | None = None,
+        firms: httpx.MockTransport | None = None,
         **setting_overrides: object,
     ) -> TestClient:
         database = tmp_path / f"api-{len(clients)}.db"
@@ -64,6 +73,7 @@ def start_api(
         app = create_app(
             settings=settings,
             asf_transport=asf or _asf_catalog(),
+            firms_transport=firms,
             runner=runner or InProcessRunner(),
         )
         client = TestClient(app)
@@ -419,3 +429,68 @@ def test_a_name_that_is_not_a_usable_pair_is_a_422_problem(
     # Assert
     assert response.status_code == 422
     assert response.json()["reasonCode"] == ReasonCode.INVALID_REQUEST
+
+
+class _FirmsAnswers:
+    """One detection inside the area on the last day of every chunk it is asked about."""
+
+    def __init__(self) -> None:
+        self.requests = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests += 1
+        *_, days, start = str(request.url).split("/")
+        last_day = date.fromisoformat(start) + timedelta(days=int(days) - 1)
+        row = (
+            f"{QADIRABAD_LAT},{QADIRABAD_LON},330.1,0.4,0.4,{last_day.isoformat()},2359,N20,"
+            "nominal,2.0NRT,300.2,4.5,N"
+        )
+        return httpx.Response(status_code=200, text=f"{FIRMS_HEADER}\n{row}\n")
+
+
+def test_a_wildfire_answer_carries_the_fire_context_apart_from_the_radar_lens(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    answers = _FirmsAnswers()
+    client = start_api(firms=httpx.MockTransport(answers), firms_map_key=SecretStr(FIRMS_KEY))
+
+    # Act
+    response = client.post(url=URL, json=WILDFIRE_BODY)
+
+    # Assert
+    context = response.json()["result"]["fireContext"]
+    assert response.status_code == 200
+    assert context["status"] == "available"
+    assert context["detections"] >= 1
+    assert context["peakFrpMw"] == 4.5
+    assert context["source"].startswith("NASA FIRMS")
+    assert answers.requests > 0
+
+
+def test_without_a_firms_key_the_wildfire_answer_says_it_is_radar_only(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    answers = _FirmsAnswers()
+    client = start_api(firms=httpx.MockTransport(answers))
+
+    # Act
+    response = client.post(url=URL, json=WILDFIRE_BODY)
+
+    # Assert
+    context = response.json()["result"]["fireContext"]
+    assert context["status"] == "notConfigured"
+    assert "radar-only" in context["note"]
+    assert answers.requests == 0
+
+
+def test_a_flood_answer_has_no_fire_context(start_api: Callable[..., TestClient]) -> None:
+    # Arrange
+    client = start_api(firms_map_key=SecretStr(FIRMS_KEY))
+
+    # Act
+    response = client.post(url=URL, json=BODY)
+
+    # Assert
+    assert response.json()["result"].get("fireContext") is None

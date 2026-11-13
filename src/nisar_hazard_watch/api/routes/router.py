@@ -5,6 +5,7 @@ from nisar_hazard_watch.api.routes.explorations.routes import router as explorat
 from nisar_hazard_watch.api.routes.health.routes import router as health_router
 from nisar_hazard_watch.api.routes.insar.routes import router as insar_router
 from nisar_hazard_watch.api.routes.lenses.routes import router as lenses_router
+from nisar_hazard_watch.api.routes.places.routes import router as places_router
 from nisar_hazard_watch.constants.routes import (
     API_PREFIX,
     COVERAGE_PREFIX,
@@ -12,6 +13,7 @@ from nisar_hazard_watch.constants.routes import (
     HEALTH_PREFIX,
     INSAR_PREFIX,
     LENSES_PREFIX,
+    PLACES_PREFIX,
 )
 
 ROUTERS: tuple[tuple[APIRouter, str], ...] = (
@@ -20,6 +22,7 @@ ROUTERS: tuple[tuple[APIRouter, str], ...] = (
     (lenses_router, LENSES_PREFIX),
     (coverage_router, COVERAGE_PREFIX),
     (insar_router, INSAR_PREFIX),
+    (places_router, PLACES_PREFIX),
 )
 
 

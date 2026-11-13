@@ -10,16 +10,22 @@ from nisar_hazard_watch import __version__
 from nisar_hazard_watch.constants.environments import Environment
 from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.log_levels import LogLevel
+from nisar_hazard_watch.constants.places import DEFAULT_GEOCODER_URL
 from nisar_hazard_watch.utils.database_url import to_async_database_url
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/nisar_hazard_watch"
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
 DEFAULT_CMR_HEALTH_URL = "https://cmr.earthdata.nasa.gov/search/health"
 DEFAULT_ML_GATEWAY_URL = "https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run"
+DEFAULT_FIRMS_URL = "https://firms.modaps.eosdis.nasa.gov"
 # Railway's edge appends two entries (measured 2026-11-12): the client is second from the right.
 DEFAULT_TRUSTED_PROXY_HOPS = 2
+# Measured 2026-11-12: a fresh area takes 47 to 147 s (reading the scenes dominates); the worker
+# itself may run 240 s. A shorter deadline answered `partial` for jobs that finished a minute later.
+DEFAULT_EXPLORATION_DEADLINE_SECONDS = 180.0
+DEFAULT_ETA_PRIOR_SECONDS = 140.0
 ORIGIN_PATTERN = re.compile(r"^https?://[^/\s]+$")
-SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret")
+SECRET_FIELDS = ("earthdata_token", "modal_token_id", "modal_token_secret", "firms_map_key")
 
 
 class Settings(BaseSettings):
@@ -41,16 +47,22 @@ class Settings(BaseSettings):
     runner: RunnerKind = RunnerKind.GATEWAY
     asf_timeout_seconds: float = Field(default=30.0, gt=0)
     gateway_timeout_seconds: float = Field(default=20.0, gt=0)
+    firms_url: str = DEFAULT_FIRMS_URL
+    firms_timeout_seconds: float = Field(default=10.0, gt=0)
+    fire_context_timeout_seconds: float = Field(default=15.0, gt=0)
+    geocoder_url: str = DEFAULT_GEOCODER_URL
+    geocoder_timeout_seconds: float = Field(default=8.0, gt=0)
     max_active_explorations: int = Field(default=5, ge=1)
-    exploration_deadline_seconds: float = Field(default=55.0, gt=0)
+    exploration_deadline_seconds: float = Field(default=DEFAULT_EXPLORATION_DEADLINE_SECONDS, gt=0)
     exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)
     rate_limit_per_minute: int = Field(default=20, ge=1)
     trusted_proxy_hops: int = Field(default=DEFAULT_TRUSTED_PROXY_HOPS, ge=0)
-    eta_prior_seconds: float = Field(default=60.0, gt=0)
+    eta_prior_seconds: float = Field(default=DEFAULT_ETA_PRIOR_SECONDS, gt=0)
     precomputed_cases_path: str | None = None
     earthdata_token: SecretStr | None = None
     modal_token_id: SecretStr | None = None
     modal_token_secret: SecretStr | None = None
+    firms_map_key: SecretStr | None = None
 
     @field_validator("log_level", mode="before")
     @classmethod
