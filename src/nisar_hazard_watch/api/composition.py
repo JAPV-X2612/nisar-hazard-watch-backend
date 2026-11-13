@@ -7,6 +7,7 @@ from nisar_hazard_watch.adapters.credentials.configured_probe import ConfiguredP
 from nisar_hazard_watch.adapters.db.database_probe import DatabaseProbe
 from nisar_hazard_watch.adapters.db.job_repository import SqlJobRepository
 from nisar_hazard_watch.adapters.firms.firms_client import FirmsClient
+from nisar_hazard_watch.adapters.gateway.gateway_insar_catalog import GatewayInsarCatalog
 from nisar_hazard_watch.adapters.geocoding.nominatim_geocoder import NominatimGeocoder
 from nisar_hazard_watch.adapters.nasa.cmr_probe import CmrProbe
 from nisar_hazard_watch.adapters.runners.gateway_runner import GatewayRunner
@@ -14,6 +15,7 @@ from nisar_hazard_watch.adapters.runners.in_process_runner import InProcessRunne
 from nisar_hazard_watch.config.settings import Settings
 from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.health import DependencyName
+from nisar_hazard_watch.hazards.earthquake.insar_pairs_service import InsarPairsService
 from nisar_hazard_watch.hazards.wildfire.fire_context_provider import FirmsFireContextProvider
 from nisar_hazard_watch.ports.analysis_runner import AnalysisRunner
 from nisar_hazard_watch.services.eta_estimator import EtaEstimator
@@ -44,6 +46,14 @@ def build_health_service(
         version=settings.version,
         environment=settings.environment,
         probe_timeout_seconds=settings.health_probe_timeout_seconds,
+    )
+
+
+def build_insar_pairs_service(
+    settings: Settings, gateway_client: httpx.AsyncClient
+) -> InsarPairsService:
+    return InsarPairsService(
+        catalog=GatewayInsarCatalog(client=gateway_client, base_url=settings.ml_gateway_url)
     )
 
 

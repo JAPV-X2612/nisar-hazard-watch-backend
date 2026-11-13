@@ -11,6 +11,7 @@ from nisar_hazard_watch.api.body_limit_middleware import BodyLimitMiddleware
 from nisar_hazard_watch.api.composition import (
     build_exploration_service,
     build_health_service,
+    build_insar_pairs_service,
     build_place_search_service,
 )
 from nisar_hazard_watch.api.error_handlers import register_error_handlers
@@ -77,6 +78,9 @@ def create_app(
                     gateway_client=gateway_client,
                     firms_client=firms_client,
                     runner=runner,
+                )
+                app.state.insar_pairs_service = build_insar_pairs_service(
+                    settings=settings, gateway_client=gateway_client
                 )
                 app.state.place_search_service = build_place_search_service(
                     settings=settings, geocoder_client=geocoder_client

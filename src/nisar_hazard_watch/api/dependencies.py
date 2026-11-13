@@ -4,6 +4,7 @@ from fastapi import Depends, Request
 
 from nisar_hazard_watch.constants.routes import CLIENT_IP_HEADER, UNKNOWN_CLIENT
 from nisar_hazard_watch.exceptions.exploration_errors import RateLimitedError
+from nisar_hazard_watch.hazards.earthquake.insar_pairs_service import InsarPairsService
 from nisar_hazard_watch.services.exploration_service import ExplorationService
 from nisar_hazard_watch.services.health_service import HealthService
 from nisar_hazard_watch.services.place_search_service import PlaceSearchService
@@ -18,6 +19,10 @@ def get_exploration_service(request: Request) -> ExplorationService:
     return request.app.state.exploration_service
 
 
+def get_insar_pairs_service(request: Request) -> InsarPairsService:
+    return request.app.state.insar_pairs_service
+
+
 def get_place_search_service(request: Request) -> PlaceSearchService:
     return request.app.state.place_search_service
 
@@ -28,6 +33,7 @@ def get_rate_limiter(request: Request) -> RateLimiter:
 
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 ExplorationServiceDep = Annotated[ExplorationService, Depends(get_exploration_service)]
+InsarPairsServiceDep = Annotated[InsarPairsService, Depends(get_insar_pairs_service)]
 PlaceSearchServiceDep = Annotated[PlaceSearchService, Depends(get_place_search_service)]
 
 

@@ -316,7 +316,7 @@ def test_unknown_and_malformed_ids_are_rejected(start_api: Callable[..., TestCli
     assert malformed.status_code == 422
 
 
-def test_the_lens_catalog_lists_the_four_supported_lenses(
+def test_the_lens_catalog_lists_the_supported_lenses_including_the_insar_pair(
     start_api: Callable[..., TestClient],
 ) -> None:
     # Arrange
@@ -327,9 +327,16 @@ def test_the_lens_catalog_lists_the_four_supported_lenses(
 
     # Assert
     lenses = {lens["id"]: lens for lens in response.json()}
-    assert set(lenses) == {"flood_wetland", "vegetation_disturbance", "wildfire", "agriculture"}
+    assert set(lenses) == {
+        "flood_wetland",
+        "vegetation_disturbance",
+        "wildfire",
+        "agriculture",
+        "insar",
+    }
     assert lenses["agriculture"]["opticalEvidence"] is False
     assert lenses["flood_wetland"]["minimumDates"] == 4
+    assert lenses["insar"]["minimumDates"] == 2
 
 
 def test_coverage_describes_the_plan_for_a_point(start_api: Callable[..., TestClient]) -> None:
@@ -364,6 +371,64 @@ def test_the_openapi_document_lists_the_new_endpoints(
     assert f"{URL}/{{exploration_id}}/layers/{{layer_id}}" in paths
     assert "/api/v1/lenses" in paths
     assert "/api/v1/coverage" in paths
+
+
+KUMAMOTO_PAIR = (
+    "NISAR_L2_PR_GUNW_026_024_A_018_028_4000_SH_20260721T202900_20260721T202934_"
+    "20260814T202858_20260814T202933_P05023_N_F_J_001"
+)
+KUMAMOTO_POINT = {"type": "Point", "coordinates": [130.65, 32.65]}
+
+
+def test_an_insar_pair_is_answered_without_a_gcov_scene_catalog(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    client = start_api(asf=_asf_catalog(status=503))
+    body = {"lens": "insar", "geometry": KUMAMOTO_POINT, "pairId": KUMAMOTO_PAIR}
+
+    # Act
+    response = client.post(url=URL, json=body)
+
+    # Assert
+    answer = response.json()
+    assert response.status_code == 200
+    assert answer["status"] == "succeeded"
+    assert answer["lens"] == "insar"
+    assert answer["result"]["windowStart"] == "2026-07-21"
+    assert answer["result"]["windowEnd"] == "2026-08-14"
+    assert answer["result"]["scenes"] == []
+    assert any("no displacement is reported" in text for text in answer["result"]["limitations"])
+
+
+def test_an_insar_question_without_a_pair_is_a_422_problem(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    client = start_api()
+
+    # Act
+    response = client.post(url=URL, json={"lens": "insar", "geometry": KUMAMOTO_POINT})
+
+    # Assert
+    assert response.status_code == 422
+    assert response.json()["reasonCode"] == ReasonCode.INVALID_REQUEST
+
+
+def test_a_name_that_is_not_a_usable_pair_is_a_422_problem(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    client = start_api()
+    reversed_pair = KUMAMOTO_PAIR.replace("20260814T202858", "20260601T202858")
+    body = {"lens": "insar", "geometry": KUMAMOTO_POINT, "pairId": reversed_pair}
+
+    # Act
+    response = client.post(url=URL, json=body)
+
+    # Assert
+    assert response.status_code == 422
+    assert response.json()["reasonCode"] == ReasonCode.INVALID_REQUEST
 
 
 class _FirmsAnswers:

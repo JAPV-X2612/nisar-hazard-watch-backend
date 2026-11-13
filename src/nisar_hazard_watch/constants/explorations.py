@@ -6,6 +6,7 @@ class Lens(StrEnum):
     VEGETATION_DISTURBANCE = "vegetation_disturbance"
     WILDFIRE = "wildfire"
     AGRICULTURE = "agriculture"
+    INSAR = "insar"
 
 
 OPTICAL_LENSES = frozenset({Lens.FLOOD_WETLAND, Lens.VEGETATION_DISTURBANCE, Lens.WILDFIRE})
@@ -79,12 +80,15 @@ class ScienceStatus(StrEnum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     NO_DATA = "no_data"
+    UNAVAILABLE = "unavailable"
 
 
 class LayerKind(StrEnum):
     CHANGE = "change"
     DIAGNOSTIC = "diagnostic"
     OBSERVED = "observed"
+    COHERENCE = "coherence"
+    PHASE = "phase"
     GENERIC = "layer"
 
 

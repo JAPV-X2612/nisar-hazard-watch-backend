@@ -33,6 +33,14 @@ from nisar_hazard_watch.constants.explorations import (
     TimingKey,
 )
 from nisar_hazard_watch.constants.fire_context import WILDFIRE_LIMITATION, FireContextStatus
+from nisar_hazard_watch.constants.insar import (
+    INSAR_FAILURE_DETAILS,
+    INSAR_LIMITATIONS,
+    INSAR_NO_DATA_DETAIL,
+    INSAR_SCENES,
+    INSAR_WINDOW_KM,
+    INSAR_WINDOW_LIMITATION,
+)
 from nisar_hazard_watch.constants.routes import API_PREFIX, EXPLORATIONS_PREFIX
 from nisar_hazard_watch.constants.sar import PlanStatus
 from nisar_hazard_watch.exceptions.catalog_errors import CatalogUnavailableError
@@ -59,6 +67,7 @@ from nisar_hazard_watch.models.geometry import Aoi
 from nisar_hazard_watch.models.scene import ScenePlan
 from nisar_hazard_watch.ports.analysis_runner import (
     AnalysisRunner,
+    InsarSelection,
     RunnerJob,
     RunnerResult,
     RunnerTicket,
@@ -74,6 +83,7 @@ from nisar_hazard_watch.utils.geometry import (
     aoi_from_point,
     window_pixels,
 )
+from nisar_hazard_watch.utils.gunw import pair_dates
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +144,14 @@ class ExplorationService:
             )
         aoi = self._aoi(geometry=request.geometry)
         started = self._timer()
-        plan = await self._plan(aoi=aoi, request=request)
+        plan = (
+            self._insar_plan(aoi=aoi, request=request)
+            if request.lens is Lens.INSAR
+            else await self._plan(aoi=aoi, request=request)
+        )
         plan_seconds = round(self._timer() - started, 2)
         now = self._clock()
-        scenes_total = len(plan.scenes)
+        scenes_total = INSAR_SCENES if request.lens is Lens.INSAR else len(plan.scenes)
         bucket = self._area_bucket(aoi=aoi)
         if plan.status is not PlanStatus.READY:
             job = self._unrunnable_job(
@@ -159,7 +173,12 @@ class ExplorationService:
         )
 
         ticket = await self._runner.submit(
-            job=RunnerJob(lens=request.lens, plan=plan, optical_evidence=request.optical_evidence)
+            job=RunnerJob(
+                lens=request.lens,
+                plan=plan,
+                optical_evidence=request.optical_evidence,
+                pair=self._pair(request=request),
+            )
         )
         eta = await self._eta.estimate(
             lens=request.lens, scenes_total=scenes_total, area_bucket=bucket
@@ -246,6 +265,26 @@ class ExplorationService:
                 raise InvalidGeometryError("point coordinates must be numbers") from None
             return aoi_from_point(lon=longitude, lat=latitude)
         return aoi_from_geojson(geometry=geometry)
+
+    @staticmethod
+    def _insar_plan(aoi: Aoi, request: ExplorationRequest) -> ScenePlan:
+        """An InSAR pair needs no GCOV plan: the pair's own two days are the window."""
+        assert request.pair_id is not None
+        reference, secondary = pair_dates(pair_id=request.pair_id)
+        return ScenePlan(
+            status=PlanStatus.READY,
+            aoi=aoi,
+            window_start=datetime.combine(reference, datetime.min.time(), tzinfo=UTC),
+            window_end=datetime.combine(secondary, datetime.min.time(), tzinfo=UTC),
+        )
+
+    @staticmethod
+    def _pair(request: ExplorationRequest) -> InsarSelection | None:
+        if request.pair_id is None or request.coherence_threshold is None:
+            return None
+        return InsarSelection(
+            pair_id=request.pair_id, coherence_threshold=request.coherence_threshold
+        )
 
     async def _plan(self, aoi: Aoi, request: ExplorationRequest) -> ScenePlan:
         try:
@@ -387,13 +426,19 @@ class ExplorationService:
         self, job: ExplorationJob, result: RunnerResult, now: datetime
     ) -> dict[str, Any]:
         assert job.plan is not None
+        if result.science_status == ScienceStatus.UNAVAILABLE.value:
+            reason = result.insar.reason if result.insar else None
+            return self._failed(
+                detail=INSAR_FAILURE_DETAILS.get(reason or "", UNKNOWN_FAILURE_DETAIL), now=now
+            )
         status = SCIENCE_STATUS_TO_STATUS.get(result.science_status)
         if status is None:
             return self._failed(
                 detail=f"the analysis service returned an unknown status {result.science_status!r}",
                 now=now,
             )
-        _, truncated = window_pixels(aoi=job.plan.aoi)
+        insar = job.lens is Lens.INSAR
+        truncated = self._truncated(aoi=job.plan.aoi, insar=insar)
         layers = [
             Layer(
                 **layer.model_dump(exclude={"url"}),
@@ -422,13 +467,14 @@ class ExplorationService:
                 QUALITY_WINDOW_TRUNCATED: truncated,
             },
             limitations=[
-                *LIMITATIONS,
+                *(INSAR_LIMITATIONS if insar else LIMITATIONS),
                 *([WILDFIRE_LIMITATION] if job.lens is Lens.WILDFIRE else []),
-                *([WINDOW_LIMITATION] if truncated else []),
+                *([INSAR_WINDOW_LIMITATION if insar else WINDOW_LIMITATION] if truncated else []),
             ],
             scientific_status=SCIENTIFIC_STATUS,
             timings=result.timings,
             is_demo=result.is_demo,
+            insar=result.insar,
         )
         update: dict[str, Any] = {
             "status": status,
@@ -441,7 +487,11 @@ class ExplorationService:
         if status is ExplorationStatus.NO_DATA:
             update["error"] = ProblemInfo(
                 reason_code=ReasonCode.NO_COVERAGE,
-                detail="the planned scenes held no usable measurements",
+                detail=(
+                    INSAR_NO_DATA_DETAIL
+                    if insar
+                    else "the planned scenes held no usable measurements"
+                ),
             )
         return update
 
@@ -519,6 +569,12 @@ class ExplorationService:
         )
 
     @staticmethod
+    def _truncated(aoi: Aoi, insar: bool) -> bool:
+        if insar:
+            return aoi.area_km2 > INSAR_WINDOW_KM**2
+        return window_pixels(aoi=aoi)[1]
+
+    @staticmethod
     def _area_bucket(aoi: Aoi) -> str:
         top = (int(aoi.area_km2 // AREA_BUCKET_KM2_STEP) + 1) * AREA_BUCKET_KM2_STEP
         return f"<={top}"
@@ -533,5 +589,7 @@ class ExplorationService:
             "windowEnd": plan.window_end.date().isoformat(),
             "granules": sorted(scene.granule_id for scene in plan.scenes),
         }
+        if request.lens is Lens.INSAR:
+            identity |= {"pair": request.pair_id, "coherence": request.coherence_threshold}
         encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
