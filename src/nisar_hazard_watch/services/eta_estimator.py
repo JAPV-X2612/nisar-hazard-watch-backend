@@ -16,7 +16,7 @@ def percentile(values: list[float], fraction: float) -> float:
 
 
 class EtaEstimator:
-    """p80 of recent comparable runs; until there are enough, the 60 s budget is the prior."""
+    """p80 of recent comparable runs; until there are enough, the configured prior is used."""
 
     def __init__(
         self,

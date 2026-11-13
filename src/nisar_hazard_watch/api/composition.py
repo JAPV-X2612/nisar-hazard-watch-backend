@@ -7,6 +7,7 @@ from nisar_hazard_watch.adapters.credentials.configured_probe import ConfiguredP
 from nisar_hazard_watch.adapters.db.database_probe import DatabaseProbe
 from nisar_hazard_watch.adapters.db.job_repository import SqlJobRepository
 from nisar_hazard_watch.adapters.firms.firms_client import FirmsClient
+from nisar_hazard_watch.adapters.geocoding.nominatim_geocoder import NominatimGeocoder
 from nisar_hazard_watch.adapters.nasa.cmr_probe import CmrProbe
 from nisar_hazard_watch.adapters.runners.gateway_runner import GatewayRunner
 from nisar_hazard_watch.adapters.runners.in_process_runner import InProcessRunner
@@ -18,6 +19,7 @@ from nisar_hazard_watch.ports.analysis_runner import AnalysisRunner
 from nisar_hazard_watch.services.eta_estimator import EtaEstimator
 from nisar_hazard_watch.services.exploration_service import ExplorationService
 from nisar_hazard_watch.services.health_service import HealthService
+from nisar_hazard_watch.services.place_search_service import PlaceSearchService
 from nisar_hazard_watch.services.scene_planner import ScenePlanner
 
 
@@ -81,4 +83,12 @@ def build_exploration_service(
         fire_context=FirmsFireContextProvider(
             source=fire_source, timeout_seconds=settings.fire_context_timeout_seconds
         ),
+    )
+
+
+def build_place_search_service(
+    settings: Settings, geocoder_client: httpx.AsyncClient
+) -> PlaceSearchService:
+    return PlaceSearchService(
+        geocoder=NominatimGeocoder(client=geocoder_client, base_url=settings.geocoder_url)
     )
