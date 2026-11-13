@@ -123,9 +123,9 @@ ETA_PERCENTILE = 0.8
 ETA_MIN_SAMPLES = 3
 STAGE_BUDGETS_SECONDS = {
     StageName.PLANNING: 2.0,
-    StageName.READING: 15.0,
-    StageName.ANALYSING: 30.0,
-    StageName.RENDERING: 8.0,
+    StageName.READING: 105.0,
+    StageName.ANALYSING: 15.0,
+    StageName.RENDERING: 15.0,
 }
 LIMITATIONS = (
     "Diagnostic evidence from measured L-band radar backscatter, not a validated classifier.",
