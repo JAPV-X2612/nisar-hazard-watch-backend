@@ -10,6 +10,7 @@ from nisar_hazard_watch import __version__
 from nisar_hazard_watch.constants.environments import Environment
 from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.log_levels import LogLevel
+from nisar_hazard_watch.constants.places import DEFAULT_GEOCODER_URL
 from nisar_hazard_watch.utils.database_url import to_async_database_url
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/nisar_hazard_watch"
@@ -41,6 +42,8 @@ class Settings(BaseSettings):
     runner: RunnerKind = RunnerKind.GATEWAY
     asf_timeout_seconds: float = Field(default=30.0, gt=0)
     gateway_timeout_seconds: float = Field(default=20.0, gt=0)
+    geocoder_url: str = DEFAULT_GEOCODER_URL
+    geocoder_timeout_seconds: float = Field(default=8.0, gt=0)
     max_active_explorations: int = Field(default=5, ge=1)
     exploration_deadline_seconds: float = Field(default=55.0, gt=0)
     exploration_cache_ttl_seconds: float = Field(default=86400.0, gt=0)

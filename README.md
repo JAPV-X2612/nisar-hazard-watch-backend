@@ -38,6 +38,7 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `TRUSTED_PROXY_HOPS` | `2` | Entries the proxies in front of the API append to `X-Forwarded-For` (measured on Railway's edge: 2; with 1 every request landed in a different bucket and the limit never fired; recount if another proxy such as a Vercel rewrite is added). The client is that many entries from the right, so a spoofed leading address cannot dodge the limit; `0` ignores the header and uses the socket peer |
 | `ETA_PRIOR_SECONDS` | `60` | ETA until three comparable runs exist; then the p80 of the last 50 |
 | `ASF_TIMEOUT_SECONDS`, `GATEWAY_TIMEOUT_SECONDS` | `30`, `20` | HTTP timeouts towards the ASF catalog and the ML gateway (> 0) |
+| `GEOCODER_URL`, `GEOCODER_TIMEOUT_SECONDS` | Nominatim `/search`, `8` | Place search provider (only this host is ever called; never taken from a request) and its timeout (> 0) |
 | `PRECOMPUTED_CASES_PATH` | unset | JSON list of precomputed cases offered when the catalog is down |
 | `EARTHDATA_TOKEN` | unset | Reported as configured or not (blank counts as missing); never logged or returned |
 | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | unset | Both are needed to count as configured; never logged or returned |
@@ -52,6 +53,7 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `GET /api/v1/explorations/{id}` | Status, stage, per-stage seconds, `etaSeconds` and `etaRemainingSeconds`, progress, the scene plan and, when done, the result with its layers, limitations and `scientificStatus` |
 | `DELETE /api/v1/explorations/{id}` | Cancel a running exploration |
 | `GET /api/v1/explorations/{id}/layers/{layerId}` | `307` redirect to the layer image on the ML gateway |
+| `GET /api/v1/places?q=&limit=` | Place search for the globe (OpenStreetMap Nominatim behind a 24 h cache and a one-request-per-second throttle, as its policy asks; send it on submit, never per keystroke). Answers `places[]` with `point`, `bbox` and `attribution` |
 | `GET /api/v1/lenses` | The supported lenses and how many dates they need |
 | `GET /api/v1/coverage?lon=&lat=` | The scene plan for a point without running anything |
 
@@ -71,7 +73,7 @@ src/nisar_hazard_watch/
   api/          app factory, composition root, middlewares (request id, unexpected errors), error handlers, routes/<resource>/
   services/     use cases: HealthService, ScenePlanner (and scene_selection), ExplorationService, EtaEstimator, lens_catalog
   ports/        interfaces the services depend on (DependencyProbe, SarCatalog, AnalysisRunner, JobRepository, PrecomputedCases)
-  adapters/     implementations: db/ (jobs), nasa/ (CMR health), asf/ (scene catalog), runners/ (ML gateway, in-process), cases/, credentials/
+  adapters/     implementations: db/ (jobs), nasa/ (CMR health), asf/ (scene catalog), geocoding/ (Nominatim), runners/ (ML gateway, in-process), cases/, credentials/
   models/       camelCase DTOs (CamelModel), problem details, health
   constants/    routes, headers, reason codes, enums: no magic strings
   config/       settings (pydantic-settings)

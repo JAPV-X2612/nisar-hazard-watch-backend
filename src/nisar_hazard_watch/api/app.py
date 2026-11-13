@@ -8,13 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from nisar_hazard_watch.adapters.db.engine import create_engine
 from nisar_hazard_watch.api.body_limit_middleware import BodyLimitMiddleware
-from nisar_hazard_watch.api.composition import build_exploration_service, build_health_service
+from nisar_hazard_watch.api.composition import (
+    build_exploration_service,
+    build_health_service,
+    build_place_search_service,
+)
 from nisar_hazard_watch.api.error_handlers import register_error_handlers
 from nisar_hazard_watch.api.request_id_middleware import RequestIdMiddleware
 from nisar_hazard_watch.api.routes.router import register_routes
 from nisar_hazard_watch.config.settings import Settings, get_settings
 from nisar_hazard_watch.constants.explorations import BODY_LIMIT_BYTES
 from nisar_hazard_watch.constants.headers import REQUEST_ID_HEADER
+from nisar_hazard_watch.constants.places import GEOCODER_USER_AGENT
 from nisar_hazard_watch.ports.analysis_runner import AnalysisRunner
 from nisar_hazard_watch.utils.logging import configure_logging
 from nisar_hazard_watch.utils.rate_limiter import RateLimiter
@@ -32,6 +37,7 @@ def create_app(
     cmr_transport: httpx.AsyncBaseTransport | None = None,
     asf_transport: httpx.AsyncBaseTransport | None = None,
     gateway_transport: httpx.AsyncBaseTransport | None = None,
+    geocoder_transport: httpx.AsyncBaseTransport | None = None,
     runner: AnalysisRunner | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
@@ -51,6 +57,11 @@ def create_app(
                 httpx.AsyncClient(
                     timeout=settings.gateway_timeout_seconds, transport=gateway_transport
                 ) as gateway_client,
+                httpx.AsyncClient(
+                    timeout=settings.geocoder_timeout_seconds,
+                    transport=geocoder_transport,
+                    headers={"User-Agent": GEOCODER_USER_AGENT.format(version=settings.version)},
+                ) as geocoder_client,
             ):
                 app.state.health_service = build_health_service(
                     settings=settings, engine=engine, http_client=http_client
@@ -61,6 +72,9 @@ def create_app(
                     asf_client=asf_client,
                     gateway_client=gateway_client,
                     runner=runner,
+                )
+                app.state.place_search_service = build_place_search_service(
+                    settings=settings, geocoder_client=geocoder_client
                 )
                 app.state.rate_limiter = RateLimiter(
                     max_requests=settings.rate_limit_per_minute, window_seconds=RATE_WINDOW_SECONDS
