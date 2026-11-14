@@ -18,6 +18,8 @@ from nisar_hazard_watch.constants.explorations import (
     OBSERVED_STATUS,
     QUALITY_MATURITY_MIXED,
     QUALITY_WINDOW_TRUNCATED,
+    REGIONAL_DEADLINE_SECONDS,
+    REGIONAL_MAX_DATES,
     SCIENTIFIC_STATUS,
     STAGE_BUDGETS_SECONDS,
     CacheState,
@@ -97,6 +99,7 @@ FAILURE_DETAILS = {
     GatewayErrorCode.JOB_NOT_FOUND.value: "the analysis service lost the job",
 }
 UNKNOWN_FAILURE_DETAIL = "the analysis could not produce a result"
+ASSET_KEY_PREFIX = "asset:"
 EMPTY_RESULT_DETAIL = "the analysis service reported success without a result"
 WINDOW_LIMITATION = (
     "The analysed window is limited to about 10 km around the centre of the area; cells beyond "
@@ -153,7 +156,9 @@ class ExplorationService:
         now = self._clock()
         scenes_total = INSAR_SCENES if request.lens is Lens.INSAR else len(plan.scenes)
         bucket = self._area_bucket(aoi=aoi)
-        if plan.status is not PlanStatus.READY:
+        if plan.status is PlanStatus.NO_COVERAGE or (
+            request.lens is not Lens.INSAR and not plan.scenes
+        ):
             job = self._unrunnable_job(
                 request=request, plan=plan, bucket=bucket, plan_seconds=plan_seconds, now=now
             )
@@ -203,6 +208,63 @@ class ExplorationService:
         await self._repository.add(job=job)
         return await self._view(job=job), job.status not in ACTIVE_STATUSES
 
+    async def create_analysis(self, exploration_id: str) -> tuple[ExplorationView, bool]:
+        parent = await self._load(exploration_id=exploration_id)
+        plan = parent.plan
+        if (
+            parent.lens is Lens.INSAR
+            or plan is None
+            or plan.group is None
+            or parent.result is None
+            or parent.result.is_demo
+            or (parent.result.products is not None and parent.result.products.analysis is not None)
+            or parent.status not in (ExplorationStatus.SUCCEEDED, ExplorationStatus.PARTIAL)
+        ):
+            raise SourceNotAvailableError("regional analysis needs a measured GCOV exploration")
+        identity = (
+            "regional-v1",
+            plan.group.series_key,
+            aoi_center(aoi=plan.aoi),
+            plan.window_start.date().isoformat(),
+            plan.window_end.date().isoformat(),
+        )
+        cache_key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+        now = self._clock()
+        fresh = await self._repository.find_fresh(
+            cache_key=cache_key, newer_than=now - timedelta(seconds=self._cache_ttl_seconds)
+        )
+        if fresh is not None:
+            return await self._view(job=fresh, cache=CacheState.HIT), True
+        active = await self._repository.find_active(cache_key=cache_key, now=now)
+        if active is not None:
+            view = await self.get(exploration_id=active.id)
+            return view, view.status not in ACTIVE_STATUSES
+        if await self._repository.count_active(now=now) >= self._max_active:
+            raise QueueFullError("the analysis service is at capacity; retry shortly")
+
+        # Modal coalesces concurrent submissions of the same canonical request.
+        ticket = await self._runner.submit(
+            job=RunnerJob(lens=parent.lens, plan=plan, regional_analysis=True)
+        )
+        job = ExplorationJob(
+            id=EXPLORATION_ID_PREFIX + uuid.uuid4().hex[:16],
+            status=ExplorationStatus.QUEUED,
+            stage=Stage.QUEUED,
+            lens=parent.lens,
+            source=parent.source,
+            optical_evidence=False,
+            cache_key=cache_key,
+            area_bucket=parent.area_bucket,
+            scenes_total=REGIONAL_MAX_DATES,
+            plan_seconds=0,
+            plan=plan.model_copy(update={"scenes": [], "maturity_mixed": False}),
+            created_at=now,
+            deadline_at=now + timedelta(seconds=REGIONAL_DEADLINE_SECONDS),
+        )
+        job = self._apply(job=job, ticket=ticket, now=now)
+        await self._repository.add(job=job)
+        return await self._view(job=job), job.status not in ACTIVE_STATUSES
+
     async def get(self, exploration_id: str) -> ExplorationView:
         job = await self._load(exploration_id=exploration_id)
         now = self._clock()
@@ -232,6 +294,13 @@ class ExplorationService:
         url = job.layer_urls.get(layer_id)
         if url is None:
             raise ExplorationNotFoundError(f"the exploration has no layer {layer_id!r}")
+        return url
+
+    async def asset_url(self, exploration_id: str, name: str) -> str:
+        job = await self._load(exploration_id=exploration_id)
+        url = job.layer_urls.get(ASSET_KEY_PREFIX + name)
+        if url is None:
+            raise ExplorationNotFoundError("the exploration has no published asset with that name")
         return url
 
     async def coverage(self, geometry: dict[str, Any]) -> CoverageView:
@@ -363,7 +432,9 @@ class ExplorationService:
                     "status": ExplorationStatus.PARTIAL,
                     "stage": Stage.DONE,
                     "finished_at": now,
-                    "error": self._timeout_error(),
+                    "error": self._timeout_error(
+                        (job.deadline_at - job.created_at).total_seconds()
+                    ),
                 }
             )
         if updated == job:
@@ -375,7 +446,12 @@ class ExplorationService:
     async def _with_fire_context(self, job: ExplorationJob) -> ExplorationJob:
         """Wildfire answers carry independent fire evidence next to the radar, never inside it."""
         result = job.result
-        if self._fire_context is None or job.lens is not Lens.WILDFIRE or result is None:
+        if (
+            self._fire_context is None
+            or job.lens is not Lens.WILDFIRE
+            or result is None
+            or (result.products is not None and result.products.analysis is not None)
+        ):
             return job
         if job.plan is None:
             return job
@@ -387,12 +463,12 @@ class ExplorationService:
             update={"result": result.model_copy(update={"fire_context": context})}
         )
 
-    def _timeout_error(self) -> ProblemInfo:
+    def _timeout_error(self, deadline_seconds: float | None = None) -> ProblemInfo:
+        limit = deadline_seconds if deadline_seconds is not None else self._deadline_seconds
         return ProblemInfo(
             reason_code=ReasonCode.TIMEOUT_PARTIAL,
             detail=(
-                f"the analysis did not finish within {self._deadline_seconds:.0f} s; "
-                "the planned scenes are listed"
+                f"the analysis did not finish within {limit:.0f} s; the planned scenes are listed"
             ),
         )
 
@@ -438,7 +514,26 @@ class ExplorationService:
                 now=now,
             )
         insar = job.lens is Lens.INSAR
+        if (
+            status is ExplorationStatus.SUCCEEDED
+            and (result.lens or {}).get("status") == "insufficient_data"
+        ):
+            status = ExplorationStatus.PARTIAL
         truncated = self._truncated(aoi=job.plan.aoi, insar=insar)
+        products = result.products
+        analysis = products.analysis if products else None
+        asset_urls: dict[str, str] = {}
+        if products is not None:
+            root = f"{API_PREFIX}{EXPLORATIONS_PREFIX}/{job.id}/assets"
+            asset_urls = {ASSET_KEY_PREFIX + asset.name: asset.url for asset in products.assets}
+            products = products.model_copy(
+                update={
+                    "assets": [
+                        asset.model_copy(update={"url": f"{root}/{asset.name}"})
+                        for asset in products.assets
+                    ],
+                }
+            )
         layers = [
             Layer(
                 **layer.model_dump(exclude={"url"}),
@@ -455,7 +550,7 @@ class ExplorationService:
                 ExplorationScene.model_validate(
                     scene.model_dump(exclude={"url", "code", "polarizations", "cycle"})
                 )
-                for scene in job.plan.scenes
+                for scene in ([] if analysis else job.plan.scenes)
             ],
             observations=result.observations,
             lens=result.lens,
@@ -466,7 +561,9 @@ class ExplorationService:
                 QUALITY_MATURITY_MIXED: job.plan.maturity_mixed,
                 QUALITY_WINDOW_TRUNCATED: truncated,
             },
-            limitations=[
+            limitations=analysis.limitations
+            if analysis
+            else [
                 *(INSAR_LIMITATIONS if insar else LIMITATIONS),
                 *([WILDFIRE_LIMITATION] if job.lens is Lens.WILDFIRE else []),
                 *([INSAR_WINDOW_LIMITATION if insar else WINDOW_LIMITATION] if truncated else []),
@@ -475,13 +572,14 @@ class ExplorationService:
             timings=result.timings,
             is_demo=result.is_demo,
             insar=result.insar,
+            products=products,
         )
         update: dict[str, Any] = {
             "status": status,
             "stage": Stage.DONE,
             "finished_at": now,
             "result": built,
-            "layer_urls": {layer.id: layer.url for layer in result.layers},
+            "layer_urls": {**asset_urls, **{layer.id: layer.url for layer in result.layers}},
             "timings": {**job.timings, **result.timings},
         }
         if status is ExplorationStatus.NO_DATA:
@@ -555,7 +653,14 @@ class ExplorationService:
     def _progress(job: ExplorationJob) -> Progress:
         read = None
         if job.result is not None:
-            read = sum(1 for row in job.result.observations if row.get("status") == OBSERVED_STATUS)
+            analysis = job.result.products.analysis if job.result.products else None
+            read = (
+                len(analysis.observations.get("dates", []))
+                if analysis is not None
+                else sum(
+                    1 for row in job.result.observations if row.get("status") == OBSERVED_STATUS
+                )
+            )
         return Progress(scenes_read=read, scenes_total=job.scenes_total)
 
     @staticmethod
@@ -582,7 +687,7 @@ class ExplorationService:
     @staticmethod
     def _cache_key(request: ExplorationRequest, plan: ScenePlan) -> str:
         identity = {
-            "version": 1,
+            "version": 2,
             "lens": request.lens.value,
             "optical": request.optical_evidence,
             "area": plan.aoi.wkt,

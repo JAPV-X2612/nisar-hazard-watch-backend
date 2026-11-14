@@ -32,7 +32,7 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `ML_GATEWAY_URL` | `https://ch0comilo--nisar-hazard-watch-ml.us-east.modal.run` | Modal gateway that runs the analysis of a scene plan (the production app `nisar-hazard-watch-ml`, deployed from `main` of `NISAR-Modeling`) |
 | `RUNNER` | `gateway` | `gateway`, or `inProcess` (synthetic results labelled as demo; refused in production) |
 | `MAX_ACTIVE_EXPLORATIONS` | `5` | Explorations running at once; more get `503 QUEUE_FULL` |
-| `EXPLORATION_DEADLINE_SECONDS` | `180` | After this a running exploration is answered `partial` with `TIMEOUT_PARTIAL`. Fresh areas measured 117 s to 152 s end to end (about 100 s of it reading the scenes), cached areas answer at once, and the worker may run 240 s |
+| `EXPLORATION_DEADLINE_SECONDS` | `480` | A running exploration becomes `partial` with `TIMEOUT_PARTIAL` after this deadline. The production worker has up to 420 s plus gateway admission and startup. Cache hits can return immediately. |
 | `EXPLORATION_CACHE_TTL_SECONDS` | `86400` | A finished exploration with the same lens, area and scenes is reused for this long |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Requests per client to the exploration and coverage endpoints |
 | `TRUSTED_PROXY_HOPS` | `2` | Entries the proxies in front of the API append to `X-Forwarded-For` (measured on Railway's edge: 2; with 1 every request landed in a different bucket and the limit never fired; recount if another proxy such as a Vercel rewrite is added). The client is that many entries from the right, so a spoofed leading address cannot dodge the limit; `0` ignores the header and uses the socket peer |
@@ -54,8 +54,10 @@ Environment variables (see `.env.example`). The app fails at start-up on a malfo
 | `GET /api/v1/health/live` | Liveness only; never touches a dependency (used by the Railway health check) |
 | `POST /api/v1/explorations` | Start an exploration `{lens, geometry, source?, opticalEvidence?, pairId?, coherenceThreshold?}` (`pairId` is required by the `insar` lens and refused by the others; `coherenceThreshold` is 0.1 to 0.9, default 0.35) (`geometry` is a GeoJSON Point, Polygon or MultiPolygon). `202` while it runs, `200` when the answer is final (cache hit, or no data) |
 | `GET /api/v1/explorations/{id}` | Status, stage, per-stage seconds, `etaSeconds` and `etaRemainingSeconds`, progress, the scene plan and, when done, the result with its layers, limitations and `scientificStatus` |
+| `POST /api/v1/explorations/{id}/analysis` | Start or reuse a bounded regional analysis of the exploration's catalog series. Poll the returned exploration ID. Regional measurements carry their own sampled dates and grid in `result.products.analysis`. |
 | `DELETE /api/v1/explorations/{id}` | Cancel a running exploration |
 | `GET /api/v1/explorations/{id}/layers/{layerId}` | `307` redirect to the layer image on the ML gateway |
+| `GET /api/v1/explorations/{id}/assets/{name}` | `307` redirect to a published artifact from this job. The result includes its media type, size and SHA-256. |
 | `GET /api/v1/places?q=&limit=` | Place search for the globe (OpenStreetMap Nominatim behind a 24 h cache and a one-request-per-second throttle, as its policy asks; send it on submit, never per keystroke). Answers `places[]` with `point`, `bbox` and `attribution` |
 | `GET /api/v1/lenses` | The supported lenses and how many dates they need |
 | `GET /api/v1/insar/pairs?lon=&lat=&startDate=&endDate=` | NISAR L-band interferometric (GUNW) pairs over a point, newest first, listed from the public catalog through the ML gateway (default window: the last 180 days, at most 366). Rate-limited like explorations |

@@ -23,6 +23,8 @@ from nisar_hazard_watch.constants.sar import (
     MAX_POLYGONS,
     MAX_VERTICES,
     NATIVE_PIXEL_M,
+    UTM_NORTH_LIMIT,
+    UTM_SOUTH_LIMIT,
     AoiKind,
 )
 from nisar_hazard_watch.exceptions.geometry_errors import AreaTooLargeError, InvalidGeometryError
@@ -38,10 +40,12 @@ SUPPORTED_TYPES = ("Polygon", "MultiPolygon")
 
 
 def aoi_from_point(lon: float, lat: float) -> Aoi:
-    """The contract square (10.24 km) centred on the point, built in the local UTM zone."""
+    """The contract square in the local UTM zone or polar stereographic projection."""
     _require_valid_point(lon=lon, lat=lat)
     zone = min(int((lon + HALF_TURN) // 6) + 1, 60)
     epsg = (32600 if lat >= 0 else 32700) + zone
+    if lat > UTM_NORTH_LIMIT or lat < UTM_SOUTH_LIMIT:
+        epsg = 32661 if lat >= 0 else 32761
     to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
     to_geographic = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
     x, y = to_utm.transform(lon, lat)
@@ -50,8 +54,16 @@ def aoi_from_point(lon: float, lat: float) -> Aoi:
     corners_y = [y - radius, y - radius, y + radius, y + radius]
     lons, lats = to_geographic.transform(corners_x, corners_y)
     ring = list(zip(lons, lats, strict=True))
+    if lat > UTM_NORTH_LIMIT or lat < UTM_SOUTH_LIMIT:
+        # Densify before transforming because longitude changes rapidly across polar edges.
+        edge = shapely.segmentize(Polygon(zip(corners_x, corners_y, strict=True)), 500)
+        edge_x, edge_y = edge.exterior.xy
+        lons, lats = to_geographic.transform(edge_x, edge_y)
+        ring = list(zip(lons[:-1], lats[:-1], strict=True))
     square = Polygon(_unwrap_longitudes(ring=[*ring, ring[0]]))
-    return _build_aoi(kind=AoiKind.POINT, continuous=[square], warnings=[])
+    return _build_aoi(kind=AoiKind.POINT, continuous=[square], warnings=[]).model_copy(
+        update={"point": (lon, lat)}
+    )
 
 
 def aoi_from_geojson(geometry: dict[str, Any]) -> Aoi:
@@ -212,6 +224,8 @@ WINDOW_TOLERANCE_PIXELS = 16
 
 def aoi_center(aoi: Aoi) -> tuple[float, float]:
     """Longitude and latitude of the middle of the area, also when it crosses ±180°."""
+    if aoi.point is not None:
+        return aoi.point
     west, south, east, north = aoi.bbox
     span = (east - west) % FULL_TURN if west > east else east - west
     return _wrap(west + span / 2), (south + north) / 2

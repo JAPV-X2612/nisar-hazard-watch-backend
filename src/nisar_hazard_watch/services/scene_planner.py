@@ -67,6 +67,12 @@ class ScenePlanner:
             spacing_days=self._spacing_days,
             tolerance_days=self._tolerance_days,
         )
+        if len(selected) < self._min_images:
+            remaining = [scene for scene in reversed(members) if scene not in selected]
+            selected = sorted(
+                [*selected, *remaining[: self._min_images - len(selected)]],
+                key=lambda scene: scene.acquired_at,
+            )
         return ScenePlan(
             status=self._status(selected=selected),
             aoi=aoi,
@@ -89,7 +95,7 @@ class ScenePlanner:
             dates = ", ".join(f"{scene.acquired_at:%Y-%m-%d}" for scene in selected)
             notes.append(
                 f"only {len(selected)} usable dates found ({dates}); "
-                f"at least {self._min_images} are needed"
+                f"the baseline lens needs at least {self._min_images} dates"
             )
         coverage = mean(scene.coverage for scene in selected)
         if coverage < FULL_COVERAGE:

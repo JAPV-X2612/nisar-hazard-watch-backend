@@ -110,6 +110,10 @@ class GatewayErrorCode(StrEnum):
 
 
 GATEWAY_OPERATION = "explore"
+REGIONAL_OPERATION = "analysis"
+REGIONAL_ANALYSES = ("physical", "spectral", "stochastic")
+REGIONAL_DEADLINE_SECONDS = 480
+REGIONAL_MAX_DATES = 6
 OBSERVED_STATUS = "observed"
 GEOJSON_POINT = "Point"
 ETA_TIMING_KEY = "etaSeconds"
