@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from nisar_hazard_watch.services.case_service import CaseService
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "ml_gateway_cases.json"
 BASE_URL = "https://gateway.example.test"
 TTL_SECONDS = 600.0
+RETRY_AFTER_SECONDS = 60.0
 LAYER_PATH = "/api/v1/cases/qadirabad/layers"
 
 
@@ -30,13 +32,17 @@ class FakeCatalog:
     def __init__(self, cases: list[CaseView]) -> None:
         self.calls = 0
         self.down = False
-        self._cases = cases
+        self.cases_to_answer = cases
+        # Cleared to hold every call open, like a gateway that takes seconds to answer.
+        self.gate = asyncio.Event()
+        self.gate.set()
 
     async def cases(self) -> list[CaseView]:
         self.calls += 1
+        await self.gate.wait()
         if self.down:
             raise CasesUnavailableError("down")
-        return self._cases
+        return self.cases_to_answer
 
 
 class FakeClock:
@@ -53,7 +59,17 @@ async def catalog() -> FakeCatalog:
 
 
 def _service(catalog: FakeCatalog, clock: FakeClock) -> CaseService:
-    return CaseService(catalog=catalog, ttl_seconds=TTL_SECONDS, clock=clock)
+    return CaseService(
+        catalog=catalog,
+        ttl_seconds=TTL_SECONDS,
+        retry_after_seconds=RETRY_AFTER_SECONDS,
+        clock=clock,
+    )
+
+
+async def _let_the_refresh_run() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
 
 
 async def test_a_second_call_within_ten_minutes_does_not_reach_the_gateway(
@@ -77,13 +93,18 @@ async def test_the_cases_are_read_again_once_the_copy_expires(catalog: FakeCatal
     clock = FakeClock()
     service = _service(catalog=catalog, clock=clock)
     await service.cases()
+    fresh = catalog.cases_to_answer[:1]
+    catalog.cases_to_answer = fresh
 
     # Act
     clock.now += TTL_SECONDS + 1
     await service.cases()
+    await _let_the_refresh_run()
+    view = await service.cases()
 
     # Assert
     assert catalog.calls == 2
+    assert [case.id for case in view.cases] == [fresh[0].id]
 
 
 async def test_a_stale_copy_is_served_when_the_gateway_is_down(catalog: FakeCatalog) -> None:
@@ -96,9 +117,97 @@ async def test_a_stale_copy_is_served_when_the_gateway_is_down(catalog: FakeCata
 
     # Act
     view = await service.cases()
+    await _let_the_refresh_run()
 
     # Assert
     assert len(view.cases) == 6
+    assert catalog.calls == 2
+
+
+async def test_an_outage_is_not_retried_on_every_request(catalog: FakeCatalog) -> None:
+    # Arrange
+    clock = FakeClock()
+    service = _service(catalog=catalog, clock=clock)
+    await service.cases()
+    catalog.down = True
+    clock.now += TTL_SECONDS + 1
+    await service.cases()
+    await _let_the_refresh_run()
+
+    # Act
+    for _ in range(30):
+        await service.layer_url(case_id="qadirabad", layer_id="change_db_hh")
+    await _let_the_refresh_run()
+    calls_while_backing_off = catalog.calls
+    clock.now += RETRY_AFTER_SECONDS
+    await service.cases()
+    await _let_the_refresh_run()
+
+    # Assert
+    assert calls_while_backing_off == 2
+    assert catalog.calls == 3
+
+
+async def test_an_outage_with_no_copy_is_not_retried_on_every_request(
+    catalog: FakeCatalog,
+) -> None:
+    # Arrange
+    clock = FakeClock()
+    catalog.down = True
+    service = _service(catalog=catalog, clock=clock)
+    with pytest.raises(CasesUnavailableError):
+        await service.cases()
+
+    # Act
+    with pytest.raises(CasesUnavailableError):
+        await service.get(case_id="qadirabad")
+    calls_while_backing_off = catalog.calls
+    catalog.down = False
+    clock.now += RETRY_AFTER_SECONDS
+    view = await service.cases()
+
+    # Assert
+    assert calls_while_backing_off == 1
+    assert catalog.calls == 2
+    assert len(view.cases) == 6
+
+
+async def test_concurrent_misses_make_one_gateway_call(catalog: FakeCatalog) -> None:
+    # Arrange
+    service = _service(catalog=catalog, clock=FakeClock())
+    catalog.gate.clear()
+    waiting = [asyncio.create_task(service.cases()) for _ in range(5)]
+    await _let_the_refresh_run()
+
+    # Act
+    catalog.gate.set()
+    views = await asyncio.gather(*waiting)
+
+    # Assert
+    assert catalog.calls == 1
+    assert {len(view.cases) for view in views} == {6}
+
+
+async def test_the_stale_copy_is_served_at_once_while_one_refresh_runs(
+    catalog: FakeCatalog,
+) -> None:
+    # Arrange
+    clock = FakeClock()
+    service = _service(catalog=catalog, clock=clock)
+    await service.cases()
+    catalog.gate.clear()
+    clock.now += TTL_SECONDS + 1
+
+    # Act
+    views = [await service.cases() for _ in range(3)]
+    await _let_the_refresh_run()
+    calls_during_refresh = catalog.calls
+    catalog.gate.set()
+    await _let_the_refresh_run()
+
+    # Assert
+    assert {len(view.cases) for view in views} == {6}
+    assert calls_during_refresh == 2
     assert catalog.calls == 2
 
 

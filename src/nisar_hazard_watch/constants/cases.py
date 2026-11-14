@@ -1,5 +1,7 @@
 CASES_PATH = "/v2/cases"
 CASES_CACHE_TTL_SECONDS = 600.0
+# After a failed read, the gateway is left alone this long (a cold /v2/cases can take 12 s).
+CASES_RETRY_AFTER_SECONDS = 60.0
 CASE_ID_PATTERN = r"^[a-z0-9_-]{1,40}$"
 CASES_UNAVAILABLE_DETAIL = "the known cases are unavailable"
 
