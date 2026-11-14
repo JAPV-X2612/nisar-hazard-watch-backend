@@ -9,6 +9,7 @@ from nisar_hazard_watch.adapters.gateway.gateway_case_catalog import GatewayCase
 from nisar_hazard_watch.constants.cases import CASE_FALLBACK_LIMITATIONS
 from nisar_hazard_watch.exceptions.case_errors import CasesUnavailableError
 from nisar_hazard_watch.models.case import CaseView
+from nisar_hazard_watch.models.science_products import RadarVisualization
 from tests.honesty import forbidden_keys
 
 FIXTURE = Path(__file__).parents[3] / "fixtures" / "ml_gateway_cases.json"
@@ -156,6 +157,25 @@ async def test_case_layers_carry_a_title_and_kind_and_views_keep_theirs() -> Non
     assert (change.title, change.kind) == ("baseline change HH", "change")
     assert layers["display_2026-08-28_HH"].kind == "observed"
     assert san_marcos.visualizations[0].title == "Polarization RGB · HH/HV"
+
+
+async def test_case_visualizations_use_the_exploration_dto_plus_a_url() -> None:
+    # Arrange
+    handler = Recorder(answer=httpx.Response(status_code=200, json=_real_cases()))
+
+    # Act
+    view = (await _cases(handler=handler))[5].visualizations[0]
+
+    # Assert
+    dumped = view.model_dump(mode="json")
+    assert isinstance(view, RadarVisualization)
+    assert (dumped["png"], dumped["cog"]) == (
+        "view_polarization_rgb_hh_hv.png",
+        "view_polarization_rgb_hh_hv.tif",
+    )
+    assert dumped["grid"]["posting_m"] == [10.0, 10.0]
+    assert dumped["dates"] == ["2026-10-15"]
+    assert dumped["url"] == f"{BASE_URL}/v2/cases/san-marcos/layers/view_polarization_rgb_hh_hv.png"
 
 
 @pytest.mark.parametrize(argnames="limitations", argvalues=[[], None], ids=["empty", "missing"])

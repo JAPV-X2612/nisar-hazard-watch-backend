@@ -5,6 +5,7 @@ from pydantic import ConfigDict, Field, JsonValue
 from nisar_hazard_watch.constants.cases import CaseStatus
 from nisar_hazard_watch.constants.explorations import SCIENTIFIC_STATUS
 from nisar_hazard_watch.models.base_model import CamelModel
+from nisar_hazard_watch.models.science_products import RadarVisualization
 
 Bounds = tuple[float, float, float, float]
 
@@ -29,25 +30,9 @@ class CaseLayer(CamelModel):
     legend: dict[str, str] | None = None
 
 
-class VisualizationComponent(CamelModel):
-    band: str
-    label: str
-    polarizations: list[str]
-    display_db: tuple[float, float]
+class CaseVisualization(RadarVisualization):
+    """The exploration visualization DTO (#20) plus our redirect URL; png and cog name the files."""
 
-
-class CaseVisualization(CamelModel):
-    id: str
-    recipe: str
-    title: str
-    dates: list[date]
-    interpretation: str
-    components: list[VisualizationComponent]
-    colormap: str
-    supported_cells: int
-    total_cells: int
-    bounds: Bounds
-    crs: str
     url: str
 
 

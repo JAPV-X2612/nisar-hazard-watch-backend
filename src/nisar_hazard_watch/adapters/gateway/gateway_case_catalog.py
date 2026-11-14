@@ -37,6 +37,10 @@ def _scrub(value: Any) -> Any:
     return value
 
 
+def _file_name(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
 class GatewayCaseCatalog:
     """The known cases measured ahead of time and served by the ML gateway."""
 
@@ -71,6 +75,14 @@ class GatewayCaseCatalog:
             "value_range": image.get("range"),
         }
 
+    def _visualization(self, view: dict[str, Any]) -> dict[str, Any]:
+        cog = view.get("cog_url")
+        return {
+            **self._image(image=view),
+            "png": _file_name(str(view["png_url"])),
+            "cog": _file_name(str(cog)) if cog else None,
+        }
+
     def _layer(self, layer: dict[str, Any]) -> dict[str, Any]:
         # Named like the exploration layers, so the front can draw both with one schema.
         identifier = str(layer["id"])
@@ -101,7 +113,7 @@ class GatewayCaseCatalog:
                 "evidence": evidence,
                 "layers": [self._layer(layer=layer) for layer in item["layers"]],
                 "visualizations": [
-                    self._image(image=view) for view in item.get("visualizations") or []
+                    self._visualization(view=view) for view in item.get("visualizations") or []
                 ],
                 "is_demo": item["isDemo"],
                 "limitations": evidence.get("limitations") or list(CASE_FALLBACK_LIMITATIONS),
