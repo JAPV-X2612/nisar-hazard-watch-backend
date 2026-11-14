@@ -2,6 +2,7 @@ from datetime import date
 
 from pydantic import ConfigDict, Field, JsonValue
 
+from nisar_hazard_watch.constants.cases import CaseStatus
 from nisar_hazard_watch.constants.explorations import SCIENTIFIC_STATUS
 from nisar_hazard_watch.models.base_model import CamelModel
 
@@ -17,6 +18,8 @@ class CaseGrid(CamelModel):
 
 class CaseLayer(CamelModel):
     id: str
+    title: str
+    kind: str
     url: str
     bounds: Bounds
     crs: str
@@ -140,7 +143,9 @@ class CaseSummary(CamelModel):
     id: str
     title: str
     point: tuple[float, float]
-    status: str
+    status: str = Field(
+        description="Known values: " + ", ".join(CaseStatus) + ". New values are relayed as sent."
+    )
     baseline_dates: list[date]
     assessment_dates: list[date]
 

@@ -206,3 +206,18 @@ def test_the_openapi_document_lists_the_case_endpoints(
 
     # Assert
     assert {URL, f"{URL}/{{case_id}}", f"{URL}/{{case_id}}/layers/{{layer_id}}"} <= set(paths)
+
+
+def test_the_openapi_document_names_the_known_case_statuses(
+    start_api: Callable[..., TestClient],
+) -> None:
+    # Arrange
+    client = start_api(gateway=_gateway())
+
+    # Act
+    schemas = client.get(url="/openapi.json").json()["components"]["schemas"]
+
+    # Assert
+    description = schemas["CaseSummary"]["properties"]["status"]["description"]
+    for status in ("partial", "complete", "not_displacement_ready", "evaluated"):
+        assert status in description

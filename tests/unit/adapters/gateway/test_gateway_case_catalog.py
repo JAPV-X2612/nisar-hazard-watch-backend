@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from nisar_hazard_watch.adapters.gateway.gateway_case_catalog import GatewayCaseCatalog
+from nisar_hazard_watch.constants.cases import CASE_FALLBACK_LIMITATIONS
 from nisar_hazard_watch.exceptions.case_errors import CasesUnavailableError
 from nisar_hazard_watch.models.case import CaseView
 from tests.honesty import forbidden_keys
@@ -140,6 +141,37 @@ async def test_comparison_and_pair_relay_only_their_allow_listed_keys() -> None:
     assert comparison["lastBaselineSensitivity"]["truePositiveProxyPixels"] == 235
     assert "unwrappedOffset" not in pair
     assert pair["intervalDays"] == 24
+
+
+async def test_case_layers_carry_a_title_and_kind_and_views_keep_theirs() -> None:
+    # Arrange
+    handler = Recorder(answer=httpx.Response(status_code=200, json=_real_cases()))
+
+    # Act
+    san_marcos = (await _cases(handler=handler))[5]
+
+    # Assert
+    layers = {layer.id: layer for layer in san_marcos.layers}
+    change = layers["display_baseline_change_HH"]
+    assert (change.title, change.kind) == ("baseline change HH", "change")
+    assert layers["display_2026-08-28_HH"].kind == "observed"
+    assert san_marcos.visualizations[0].title == "Polarization RGB · HH/HV"
+
+
+@pytest.mark.parametrize(argnames="limitations", argvalues=[[], None], ids=["empty", "missing"])
+async def test_a_case_without_limitations_gets_the_generic_ones(
+    limitations: list[str] | None,
+) -> None:
+    # Arrange
+    raw = _real_cases()
+    raw[0]["evidence"]["limitations"] = limitations
+    handler = Recorder(answer=httpx.Response(status_code=200, json=raw))
+
+    # Act
+    case = (await _cases(handler=handler))[0]
+
+    # Assert
+    assert case.limitations == list(CASE_FALLBACK_LIMITATIONS)
 
 
 async def test_a_case_whose_layer_lives_on_another_host_is_skipped() -> None:

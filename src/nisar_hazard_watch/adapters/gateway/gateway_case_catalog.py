@@ -2,18 +2,19 @@ import logging
 import re
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import urljoin, urlsplit
 
 import httpx
 from pydantic import ValidationError
 
 from nisar_hazard_watch.constants.cases import (
+    CASE_FALLBACK_LIMITATIONS,
     CASES_PATH,
     CASES_UNAVAILABLE_DETAIL,
     FORBIDDEN_EVIDENCE_WORDS,
 )
 from nisar_hazard_watch.exceptions.case_errors import CasesUnavailableError
 from nisar_hazard_watch.models.case import CaseView
+from nisar_hazard_watch.utils.gateway_layers import gateway_url, layer_kind, layer_title
 
 logger = logging.getLogger(__name__)
 
@@ -63,17 +64,20 @@ class GatewayCaseCatalog:
             raise CasesUnavailableError(CASES_UNAVAILABLE_DETAIL)
         return found
 
-    def _url(self, path: str) -> str:
-        url = urljoin(self._base_url + "/", path)
-        if urlsplit(url)[:2] != urlsplit(self._base_url)[:2]:
-            raise ValueError(f"layer URL {url!r} is not served by the ML gateway")
-        return url
+    def _image(self, image: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **image,
+            "url": gateway_url(base_url=self._base_url, path=str(image["png_url"])),
+            "value_range": image.get("range"),
+        }
 
     def _layer(self, layer: dict[str, Any]) -> dict[str, Any]:
+        # Named like the exploration layers, so the front can draw both with one schema.
+        identifier = str(layer["id"])
         return {
-            **layer,
-            "url": self._url(path=str(layer["png_url"])),
-            "value_range": layer.get("range"),
+            **self._image(image=layer),
+            "title": layer_title(identifier),
+            "kind": layer_kind(identifier),
         }
 
     def _case(self, item: dict[str, Any]) -> CaseView:
@@ -97,9 +101,9 @@ class GatewayCaseCatalog:
                 "evidence": evidence,
                 "layers": [self._layer(layer=layer) for layer in item["layers"]],
                 "visualizations": [
-                    self._layer(layer=view) for view in item.get("visualizations") or []
+                    self._image(image=view) for view in item.get("visualizations") or []
                 ],
                 "is_demo": item["isDemo"],
-                "limitations": evidence.get("limitations") or [],
+                "limitations": evidence.get("limitations") or list(CASE_FALLBACK_LIMITATIONS),
             }
         )
