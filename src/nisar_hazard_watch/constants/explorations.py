@@ -92,6 +92,21 @@ class LayerKind(StrEnum):
     GENERIC = "layer"
 
 
+# Gateway layer-id prefixes and the kind each one is drawn as; the first match wins.
+LAYER_KINDS = (
+    ("display_baseline_change", LayerKind.CHANGE),
+    ("display_change_", LayerKind.CHANGE),
+    ("display_flood_signature", LayerKind.DIAGNOSTIC),
+    ("display_agriculture", LayerKind.DIAGNOSTIC),
+    ("display_cross_pol_pattern", LayerKind.DIAGNOSTIC),
+    ("display_cross_pol_decline_count", LayerKind.DIAGNOSTIC),
+    ("display_coherence", LayerKind.COHERENCE),
+    ("display_wrapped_phase", LayerKind.PHASE),
+    ("display_optical", LayerKind.DIAGNOSTIC),
+    ("display_", LayerKind.OBSERVED),
+)
+
+
 class GatewayStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"

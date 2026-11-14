@@ -2,7 +2,7 @@ import logging
 import re
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -20,7 +20,7 @@ from nisar_hazard_watch.constants.explorations import (
     ScienceStatus,
     TimingKey,
 )
-from nisar_hazard_watch.constants.insar import INSAR_OPERATION, LAYER_TITLES
+from nisar_hazard_watch.constants.insar import INSAR_OPERATION
 from nisar_hazard_watch.constants.sar import Configuration, Maturity
 from nisar_hazard_watch.exceptions.exploration_errors import QueueFullError, RunnerUnavailableError
 from nisar_hazard_watch.exceptions.pair_errors import InvalidPairError
@@ -39,6 +39,7 @@ from nisar_hazard_watch.ports.analysis_runner import (
     RunnerResult,
     RunnerTicket,
 )
+from nisar_hazard_watch.utils.gateway_layers import gateway_url, layer_kind, layer_title
 from nisar_hazard_watch.utils.geometry import aoi_center, window_pixels
 from nisar_hazard_watch.utils.gunw import pair_dates
 
@@ -61,35 +62,12 @@ COLLECTION_BY_MATURITY = {
     Maturity.BETA: "BETA",
 }
 URGENT_RESPONSE_COLLECTION = "UR"
-LAYER_KINDS = (
-    ("display_baseline_change", LayerKind.CHANGE),
-    ("display_change_", LayerKind.CHANGE),
-    ("display_flood_signature", LayerKind.DIAGNOSTIC),
-    ("display_agriculture", LayerKind.DIAGNOSTIC),
-    ("display_cross_pol_pattern", LayerKind.DIAGNOSTIC),
-    ("display_cross_pol_decline_count", LayerKind.DIAGNOSTIC),
-    ("display_coherence", LayerKind.COHERENCE),
-    ("display_wrapped_phase", LayerKind.PHASE),
-    ("display_optical", LayerKind.DIAGNOSTIC),
-    ("display_", LayerKind.OBSERVED),
-)
 
 
 def _collection(scene: Scene) -> str:
     if scene.configuration is Configuration.URGENT_RESPONSE:
         return URGENT_RESPONSE_COLLECTION
     return COLLECTION_BY_MATURITY[scene.maturity]
-
-
-def _layer_kind(layer_id: str) -> str:
-    for prefix, kind in LAYER_KINDS:
-        if layer_id.startswith(prefix):
-            return kind.value
-    return LayerKind.GENERIC.value
-
-
-def _layer_title(layer_id: str) -> str:
-    return LAYER_TITLES.get(layer_id) or layer_id.removeprefix("display_").replace("_", " ")
 
 
 class GatewayRunner:
@@ -242,7 +220,7 @@ class GatewayRunner:
                     else []
                 )
                 layers.append(self._layer(layer, grid=evidence.get("grid"), dates=dates))
-            elif _layer_kind(identifier) in {LayerKind.CHANGE, LayerKind.DIAGNOSTIC} and not (
+            elif layer_kind(identifier) in {LayerKind.CHANGE, LayerKind.DIAGNOSTIC} and not (
                 identifier.startswith("display_optical") or regional
             ):
                 dates = lens.get("assessment_dates")
@@ -331,12 +309,6 @@ class GatewayRunner:
             return []
         return [{"date": day.isoformat(), "status": OBSERVED_STATUS} for day in days]
 
-    def _layer_url(self, path: str) -> str:
-        url = urljoin(self._base_url + "/", path)
-        if urlsplit(url)[:2] != urlsplit(self._base_url)[:2]:
-            raise ValueError(f"layer URL {url!r} is not served by the analysis service")
-        return url
-
     @staticmethod
     def _observation(row: dict[str, Any]) -> dict[str, Any]:
         keys = (
@@ -369,7 +341,7 @@ class GatewayRunner:
             if name in {".", ".."} or not ASSET_NAME.fullmatch(name):
                 continue
             path = f"{JOBS_PATH}/{quote(run_id, safe='')}/layers/{name}"
-            url = self._layer_url(path=href)
+            url = gateway_url(base_url=self._base_url, path=href)
             if urlsplit(url).path != path or urlsplit(url).query or urlsplit(url).fragment:
                 continue
             assets[href] = PublishedAsset(
@@ -422,12 +394,12 @@ class GatewayRunner:
         value_range = layer.get("range")
         return RunnerLayer(
             id=identifier,
-            title=_layer_title(identifier),
-            kind=_layer_kind(identifier),
+            title=layer_title(identifier),
+            kind=layer_kind(identifier),
             units=str(layer.get("units", "")),
             colormap=str(layer.get("colormap", "")),
             bounds=tuple(layer["bounds"]),
-            url=self._layer_url(path=str(layer["png_url"])),
+            url=gateway_url(base_url=self._base_url, path=str(layer["png_url"])),
             legend=layer.get("legend"),
             value_range=tuple(value_range) if value_range else None,
             crs=layer.get("crs"),

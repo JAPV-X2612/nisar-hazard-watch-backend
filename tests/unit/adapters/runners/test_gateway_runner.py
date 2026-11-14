@@ -472,3 +472,128 @@ async def test_a_pair_the_catalog_no_longer_lists_is_a_no_data_answer_without_la
     assert ticket.result.insar is not None
     assert ticket.result.insar.reason == "pair_unavailable"
     assert ticket.result.insar.window_cells is None
+
+
+# The frontend (#38) parses `products` with a strict schema; this pins the JSON #20 serializes.
+PINNED_PRODUCTS = {
+    "visualizations": [
+        {
+            "id": "view_polarization_rgb_hh_hv",
+            "recipe": "polarization_rgb",
+            "title": "Polarization RGB · HH/HV",
+            "dates": ["2026-10-15"],
+            "interpretation": "False color combines co-pol and cross-pol returns.",
+            "components": [
+                {"band": "R", "label": "HH dB", "polarizations": ["HH"], "displayDb": [-25.0, 0.0]}
+            ],
+            "colormap": "rgb",
+            "supportedCells": 4096,
+            "totalCells": 4096,
+            "grid": {
+                "crs": "EPSG:32618",
+                "bounds": [488230.0, 956620.0, 488870.0, 957260.0],
+                "shape": [64, 64],
+                "posting_m": [10.0, 10.0],
+            },
+            "bounds": [-75.107, 8.654, -75.101, 8.66],
+            "crs": "EPSG:4326",
+            "png": "view_polarization_rgb_hh_hv.png",
+            "cog": "view_polarization_rgb_hh_hv.tif",
+        }
+    ],
+    "assets": [
+        {
+            "name": "view_polarization_rgb_hh_hv.png",
+            "url": f"{BASE_URL}/v2/jobs/{RUN_ID}/layers/view_polarization_rgb_hh_hv.png",
+            "mediaType": "image/png",
+            "bytes": 200,
+            "sha256": "1" * 64,
+        },
+        {
+            "name": "view_polarization_rgb_hh_hv.tif",
+            "url": f"{BASE_URL}/v2/jobs/{RUN_ID}/layers/view_polarization_rgb_hh_hv.tif",
+            "mediaType": "image/tiff",
+            "bytes": 400,
+            "sha256": "2" * 64,
+        },
+    ],
+    "previews": [
+        {
+            "name": "view_polarization_rgb_hh_hv.png",
+            "title": "RGB",
+            "interpretation": "false color",
+            "legend": None,
+        }
+    ],
+    "analysis": None,
+}
+
+
+async def test_the_exploration_products_keep_the_json_shape_the_frontend_parses() -> None:
+    # Arrange
+    prefix = f"/v2/jobs/{RUN_ID}/layers"
+    png, cog = (
+        f"{prefix}/view_polarization_rgb_hh_hv.png",
+        f"{prefix}/view_polarization_rgb_hh_hv.tif",
+    )
+    pinned_view = PINNED_PRODUCTS["visualizations"][0]  # type: ignore[index]
+    body = {
+        "job_id": RUN_ID,
+        "status": "succeeded",
+        "result": {
+            "science_status": "partial",
+            "artifacts": [
+                {
+                    "name": png.rsplit("/", 1)[1],
+                    "href": png,
+                    "media_type": "image/png",
+                    "bytes": 200,
+                    "sha256": "1" * 64,
+                },
+                {
+                    "name": cog.rsplit("/", 1)[1],
+                    "href": cog,
+                    "media_type": "image/tiff",
+                    "bytes": 400,
+                    "sha256": "2" * 64,
+                },
+            ],
+            "visualizations": [
+                {
+                    "id": pinned_view["id"],
+                    "recipe": pinned_view["recipe"],
+                    "title": pinned_view["title"],
+                    "dates": pinned_view["dates"],
+                    "interpretation": pinned_view["interpretation"],
+                    "components": [
+                        {
+                            "band": "R",
+                            "label": "HH dB",
+                            "polarizations": ["HH"],
+                            "display_db": [-25.0, 0.0],
+                        }
+                    ],
+                    "colormap": "rgb",
+                    "supported_cells": 4096,
+                    "total_cells": 4096,
+                    "grid": pinned_view["grid"],
+                    "bounds": pinned_view["bounds"],
+                    "crs": "EPSG:4326",
+                    "png_url": png,
+                    "cog_url": cog,
+                }
+            ],
+            "previews": [{"href": png, "title": "RGB", "interpretation": "false color"}],
+        },
+    }
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=200, json=body)
+
+    # Act
+    ticket = await _run(handler, lambda runner: runner.poll(run_id=RUN_ID))
+
+    # Assert
+    assert ticket.result is not None
+    assert ticket.result.products is not None
+    assert ticket.result.products.model_dump(mode="json") == PINNED_PRODUCTS

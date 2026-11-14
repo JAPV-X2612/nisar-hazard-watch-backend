@@ -7,17 +7,20 @@ from nisar_hazard_watch.adapters.credentials.configured_probe import ConfiguredP
 from nisar_hazard_watch.adapters.db.database_probe import DatabaseProbe
 from nisar_hazard_watch.adapters.db.job_repository import SqlJobRepository
 from nisar_hazard_watch.adapters.firms.firms_client import FirmsClient
+from nisar_hazard_watch.adapters.gateway.gateway_case_catalog import GatewayCaseCatalog
 from nisar_hazard_watch.adapters.gateway.gateway_insar_catalog import GatewayInsarCatalog
 from nisar_hazard_watch.adapters.geocoding.nominatim_geocoder import NominatimGeocoder
 from nisar_hazard_watch.adapters.nasa.cmr_probe import CmrProbe
 from nisar_hazard_watch.adapters.runners.gateway_runner import GatewayRunner
 from nisar_hazard_watch.adapters.runners.in_process_runner import InProcessRunner
 from nisar_hazard_watch.config.settings import Settings
+from nisar_hazard_watch.constants.cases import CASES_CACHE_TTL_SECONDS, CASES_RETRY_AFTER_SECONDS
 from nisar_hazard_watch.constants.explorations import RunnerKind
 from nisar_hazard_watch.constants.health import DependencyName
 from nisar_hazard_watch.hazards.earthquake.insar_pairs_service import InsarPairsService
 from nisar_hazard_watch.hazards.wildfire.fire_context_provider import FirmsFireContextProvider
 from nisar_hazard_watch.ports.analysis_runner import AnalysisRunner
+from nisar_hazard_watch.services.case_service import CaseService
 from nisar_hazard_watch.services.eta_estimator import EtaEstimator
 from nisar_hazard_watch.services.exploration_service import ExplorationService
 from nisar_hazard_watch.services.health_service import HealthService
@@ -54,6 +57,14 @@ def build_insar_pairs_service(
 ) -> InsarPairsService:
     return InsarPairsService(
         catalog=GatewayInsarCatalog(client=gateway_client, base_url=settings.ml_gateway_url)
+    )
+
+
+def build_case_service(settings: Settings, gateway_client: httpx.AsyncClient) -> CaseService:
+    return CaseService(
+        catalog=GatewayCaseCatalog(client=gateway_client, base_url=settings.ml_gateway_url),
+        ttl_seconds=CASES_CACHE_TTL_SECONDS,
+        retry_after_seconds=CASES_RETRY_AFTER_SECONDS,
     )
 
 
