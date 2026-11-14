@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from nisar_hazard_watch.adapters.db.engine import create_engine
 from nisar_hazard_watch.api.body_limit_middleware import BodyLimitMiddleware
 from nisar_hazard_watch.api.composition import (
+    build_case_service,
     build_exploration_service,
     build_health_service,
     build_insar_pairs_service,
@@ -80,6 +81,9 @@ def create_app(
                     runner=runner,
                 )
                 app.state.insar_pairs_service = build_insar_pairs_service(
+                    settings=settings, gateway_client=gateway_client
+                )
+                app.state.case_service = build_case_service(
                     settings=settings, gateway_client=gateway_client
                 )
                 app.state.place_search_service = build_place_search_service(
