@@ -5,12 +5,13 @@ from fastapi.responses import RedirectResponse
 
 from nisar_hazard_watch.api.dependencies import CaseServiceDep, RateLimit
 from nisar_hazard_watch.constants.cases import CASE_ID_PATTERN
+from nisar_hazard_watch.constants.routes import LAYER_ID_PATTERN
 from nisar_hazard_watch.models.case import CasesView, CaseView
 
 router = APIRouter(tags=["cases"])
 
 CaseId = Annotated[str, Path(pattern=CASE_ID_PATTERN)]
-LayerId = Annotated[str, Path(pattern=r"^[A-Za-z0-9._-]{1,120}$")]
+LayerId = Annotated[str, Path(pattern=LAYER_ID_PATTERN)]
 
 
 @router.get("", response_model=CasesView, dependencies=[RateLimit])

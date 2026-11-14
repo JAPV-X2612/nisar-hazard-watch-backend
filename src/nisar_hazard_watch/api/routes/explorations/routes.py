@@ -4,12 +4,13 @@ from fastapi import APIRouter, Path, Response
 from fastapi.responses import RedirectResponse
 
 from nisar_hazard_watch.api.dependencies import ExplorationServiceDep, RateLimit
+from nisar_hazard_watch.constants.routes import LAYER_ID_PATTERN
 from nisar_hazard_watch.models.exploration import ExplorationRequest, ExplorationView
 
 router = APIRouter(tags=["explorations"])
 
 ExplorationId = Annotated[str, Path(pattern=r"^exp_[0-9a-f]{16}$")]
-LayerId = Annotated[str, Path(pattern=r"^[A-Za-z0-9._-]{1,120}$")]
+LayerId = Annotated[str, Path(pattern=LAYER_ID_PATTERN)]
 
 
 @router.post(
