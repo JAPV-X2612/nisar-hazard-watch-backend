@@ -104,6 +104,21 @@ class SqlJobRepository:
             record = (await session.execute(statement)).scalar_one_or_none()
             return _to_job(record) if record else None
 
+    async def find_active(self, cache_key: str, now: datetime) -> ExplorationJob | None:
+        statement = (
+            select(ExplorationRecord)
+            .where(
+                ExplorationRecord.cache_key == cache_key,
+                ExplorationRecord.status.in_(_ACTIVE),
+                ExplorationRecord.deadline_at > now,
+            )
+            .order_by(ExplorationRecord.created_at.desc())
+            .limit(1)
+        )
+        async with self._session_factory() as session:
+            record = (await session.execute(statement)).scalar_one_or_none()
+            return _to_job(record) if record else None
+
     async def recent_totals(
         self, lens: Lens, scenes_total: int, area_bucket: str, limit: int
     ) -> list[float]:

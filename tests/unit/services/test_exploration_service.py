@@ -28,6 +28,11 @@ from nisar_hazard_watch.exceptions.pair_errors import InvalidPairError
 from nisar_hazard_watch.models.exploration import ExplorationRequest, ExplorationView
 from nisar_hazard_watch.models.fire_context import FireContext
 from nisar_hazard_watch.models.insar_summary import InsarSummary
+from nisar_hazard_watch.models.science_products import (
+    PublishedAsset,
+    RegionalAnalysis,
+    ScienceProducts,
+)
 from nisar_hazard_watch.ports.analysis_runner import RunnerLayer, RunnerTicket
 from nisar_hazard_watch.ports.precomputed_cases import PrecomputedCase
 from nisar_hazard_watch.services.exploration_service import ExplorationService
@@ -104,6 +109,53 @@ async def test_the_remaining_time_counts_down_with_the_clock(
     # Assert
     assert later.elapsed_seconds == 20.0
     assert later.eta_remaining_seconds == 40.0
+
+
+async def test_regional_analysis_reuses_active_jobs_and_serves_manifest_assets(
+    make_service: Factory, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    service = make_service()
+    parent, _ = await service.create(request=_request())
+    _succeeded(runner)
+    await service.get(exploration_id=parent.id)
+    runner.poll_ticket = runner.submit_ticket
+
+    # Act
+    regional, final = await service.create_analysis(exploration_id=parent.id)
+    duplicate, _ = await service.create_analysis(exploration_id=parent.id)
+    asset = PublishedAsset(
+        name="spectral.png",
+        url="https://runner.invalid/spectral.png",
+        media_type="image/png",
+        bytes=40,
+        sha256="a" * 64,
+    )
+    _succeeded(
+        runner,
+        observations=[],
+        products=ScienceProducts(
+            assets=[asset], analysis=RegionalAnalysis(observations={"dates": ["2026-07-01"]})
+        ),
+    )
+    finished = await service.get(exploration_id=regional.id)
+    cached, _ = await service.create_analysis(exploration_id=parent.id)
+
+    # Assert
+    assert not final
+    assert regional.id == duplicate.id == cached.id
+    assert regional.id != parent.id
+    assert len(runner.submissions) == 2
+    assert runner.submissions[-1].regional_analysis
+    assert finished.result is not None
+    assert finished.result.products is not None
+    assert finished.result.scenes == []
+    assert finished.progress is not None
+    assert finished.progress.scenes_read == 1
+    assert finished.result.products.assets[0].url.endswith(f"{regional.id}/assets/spectral.png")
+    assert await service.asset_url(exploration_id=regional.id, name="spectral.png") == asset.url
+    with pytest.raises(ExplorationNotFoundError):
+        await service.asset_url(exploration_id=regional.id, name="unpublished.png")
 
 
 async def test_a_finished_run_returns_the_result_with_honest_labels_and_our_layer_urls(
@@ -275,7 +327,7 @@ async def test_an_unrunnable_plan_is_a_final_no_data_answer_with_its_reason(
     reason: ReasonCode,
 ) -> None:
     # Arrange
-    planner.plan_result = make_plan(count=2, status=status, notes=["explained here"])
+    planner.plan_result = make_plan(scenes=[], status=status, notes=["explained here"])
     service = make_service()
 
     # Act
@@ -289,6 +341,30 @@ async def test_an_unrunnable_plan_is_a_final_no_data_answer_with_its_reason(
     assert view.error.reason_code is reason
     assert "explained here" in view.error.detail
     assert runner.submissions == []
+
+
+async def test_sparse_history_returns_the_measurements_with_an_unavailable_lens(
+    make_service: Factory, planner: FakePlanner, runner: ScriptedRunner
+) -> None:
+    # Arrange
+    planner.plan_result = make_plan(count=2, status=PlanStatus.INSUFFICIENT_HISTORY)
+    service = make_service()
+
+    # Act
+    pending, final = await service.create(request=_request())
+    _succeeded(
+        runner,
+        lens={"status": "insufficient_data", "reason": "fewer_than_three_prior_dates"},
+        observations=[{"date": "2026-07-01", "status": "observed", "point_db": {"HH": -12.0}}],
+    )
+    measured = await service.get(exploration_id=pending.id)
+
+    # Assert
+    assert final is False
+    assert len(runner.submissions[0].plan.scenes) == 2
+    assert measured.status is ExplorationStatus.PARTIAL
+    assert measured.result is not None
+    assert measured.result.observations[0]["point_db"] == {"HH": -12.0}
 
 
 async def test_a_catalog_failure_propagates_and_offers_a_precomputed_case_when_one_matches(

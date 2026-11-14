@@ -14,3 +14,4 @@ class Aoi(CamelModel):
     area_km2: float
     native_pixels: int
     warnings: list[str] = Field(default_factory=list)
+    point: tuple[float, float] | None = None

@@ -4,6 +4,7 @@ from nisar_hazard_watch.constants.explorations import Lens, RunnerState
 from nisar_hazard_watch.models.base_model import CamelModel
 from nisar_hazard_watch.models.insar_summary import InsarSummary
 from nisar_hazard_watch.models.scene import ScenePlan
+from nisar_hazard_watch.models.science_products import ScienceProducts
 
 
 class InsarSelection(CamelModel):
@@ -16,6 +17,7 @@ class RunnerJob(CamelModel):
     plan: ScenePlan
     optical_evidence: bool = False
     pair: InsarSelection | None = None
+    regional_analysis: bool = False
 
 
 class RunnerLayer(CamelModel):
@@ -28,6 +30,9 @@ class RunnerLayer(CamelModel):
     url: str
     legend: dict[str, str] | None = None
     value_range: tuple[float, float] | None = None
+    crs: str | None = None
+    grid: dict[str, Any] | None = None
+    dates: list[str] | None = None
 
 
 class RunnerResult(CamelModel):
@@ -40,6 +45,7 @@ class RunnerResult(CamelModel):
     timings: dict[str, float]
     is_demo: bool = False
     insar: InsarSummary | None = None
+    products: ScienceProducts | None = None
 
 
 class RunnerTicket(CamelModel):

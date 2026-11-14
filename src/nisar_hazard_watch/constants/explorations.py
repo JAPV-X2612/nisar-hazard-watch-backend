@@ -95,9 +95,11 @@ class LayerKind(StrEnum):
 # Gateway layer-id prefixes and the kind each one is drawn as; the first match wins.
 LAYER_KINDS = (
     ("display_baseline_change", LayerKind.CHANGE),
+    ("display_change_", LayerKind.CHANGE),
     ("display_flood_signature", LayerKind.DIAGNOSTIC),
     ("display_agriculture", LayerKind.DIAGNOSTIC),
     ("display_cross_pol_pattern", LayerKind.DIAGNOSTIC),
+    ("display_cross_pol_decline_count", LayerKind.DIAGNOSTIC),
     ("display_coherence", LayerKind.COHERENCE),
     ("display_wrapped_phase", LayerKind.PHASE),
     ("display_optical", LayerKind.DIAGNOSTIC),
@@ -123,6 +125,10 @@ class GatewayErrorCode(StrEnum):
 
 
 GATEWAY_OPERATION = "explore"
+REGIONAL_OPERATION = "analysis"
+REGIONAL_ANALYSES = ("physical", "spectral", "stochastic")
+REGIONAL_DEADLINE_SECONDS = 480
+REGIONAL_MAX_DATES = 6
 OBSERVED_STATUS = "observed"
 GEOJSON_POINT = "Point"
 ETA_TIMING_KEY = "etaSeconds"
