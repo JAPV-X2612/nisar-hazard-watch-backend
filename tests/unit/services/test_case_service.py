@@ -98,7 +98,7 @@ async def test_a_stale_copy_is_served_when_the_gateway_is_down(catalog: FakeCata
     view = await service.cases()
 
     # Assert
-    assert len(view.cases) == 5
+    assert len(view.cases) == 6
     assert catalog.calls == 2
 
 
@@ -126,6 +126,7 @@ async def test_the_list_holds_summaries_in_the_gateway_order(catalog: FakeCatalo
         "richmond",
         "kumamoto",
         "choco",
+        "san-marcos",
     ]
     assert set(view.model_dump(by_alias=True)["cases"][0]) == {
         "id",

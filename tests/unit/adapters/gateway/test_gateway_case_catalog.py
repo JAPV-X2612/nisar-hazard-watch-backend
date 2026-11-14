@@ -12,7 +12,7 @@ from tests.honesty import forbidden_keys
 
 FIXTURE = Path(__file__).parents[3] / "fixtures" / "ml_gateway_cases.json"
 BASE_URL = "https://gateway.example.test"
-CASE_IDS = ["chokwe", "qadirabad", "richmond", "kumamoto", "choco"]
+CASE_IDS = ["chokwe", "qadirabad", "richmond", "kumamoto", "choco", "san-marcos"]
 QADIRABAD_LAYER_URL = f"{BASE_URL}/v2/cases/qadirabad/layers/change_db_hh.png"
 
 
@@ -71,19 +71,75 @@ async def test_no_relayed_key_names_an_unvalidated_value(index: int) -> None:
     assert "provenance" not in (dumped["evidence"]["independentReference"] or {})
 
 
-async def test_a_nested_unvalidated_key_is_dropped_too() -> None:
+async def test_san_marcos_keeps_its_signatures_policy_comparator_context_and_lens() -> None:
+    # Arrange
+    handler = Recorder(answer=httpx.Response(status_code=200, json=_real_cases()))
+
+    # Act
+    evidence = (await _cases(handler=handler))[5].evidence
+
+    # Assert
+    signatures = evidence.radar_signatures or {}
+    assert (
+        signatures["dual_darkening"].signature_cells,
+        signatures["dual_darkening"].supported_cells,
+    ) == (
+        410,
+        4096,
+    )
+    assert (evidence.signature_policy or {})["co_pol_brightening_min_change_db"] == 3.0
+    assert evidence.radar_comparator == "Target minus median of the prior measured dates"
+    assert evidence.regional_context is not None
+    assert evidence.regional_context.source == "IDEAM hydrological bulletin 853"
+    assert evidence.lens_id == "flood_wetland"
+
+
+@pytest.mark.parametrize(
+    argnames=("section", "key"),
+    argvalues=[
+        ("threshold_policy", "flooded_area_km2"),
+        ("threshold_policy", "affected_area_ha"),
+        ("independent_reference", "los_displacement_mm"),
+        ("independent_reference", "inundation_extent"),
+        ("threshold_policy", "flood_probabilities"),
+        ("threshold_policy", "cause"),
+        ("threshold_policy", "hectares"),
+    ],
+)
+async def test_a_nested_unvalidated_key_in_free_json_is_dropped(section: str, key: str) -> None:
+    # Arrange
+    raw = _real_cases()
+    raw[1]["evidence"][section][key] = 12.5
+    handler = Recorder(answer=httpx.Response(status_code=200, json=raw))
+
+    # Act
+    evidence = (await _cases(handler=handler))[1].evidence
+
+    # Assert
+    kept = getattr(evidence, section) or {}
+    assert key not in kept
+    assert kept  # the rest of the section is still relayed
+
+
+async def test_comparison_and_pair_relay_only_their_allow_listed_keys() -> None:
     # Arrange
     raw = _real_cases()
     raw[1]["evidence"]["comparison"]["affected_area_ha"] = 12.5
+    raw[3]["evidence"]["pair"]["unwrapped_offset"] = 1.0
     handler = Recorder(answer=httpx.Response(status_code=200, json=raw))
 
     # Act
     cases = await _cases(handler=handler)
 
     # Assert
-    comparison = cases[1].evidence.comparison or {}
+    comparison = cases[1].model_dump(mode="json")["evidence"]["comparison"]
+    pair = cases[3].model_dump(mode="json")["evidence"]["pair"]
+    assert "affectedAreaHa" not in comparison
     assert "affected_area_ha" not in comparison
-    assert "scored_pixels" in comparison
+    assert comparison["scoredPixels"] == 8775
+    assert comparison["lastBaselineSensitivity"]["truePositiveProxyPixels"] == 235
+    assert "unwrappedOffset" not in pair
+    assert pair["intervalDays"] == 24
 
 
 async def test_a_case_whose_layer_lives_on_another_host_is_skipped() -> None:

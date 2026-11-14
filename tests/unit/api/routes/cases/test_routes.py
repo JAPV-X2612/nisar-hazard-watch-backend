@@ -78,6 +78,7 @@ def test_the_cases_come_back_as_camel_case_summaries_in_the_gateway_order(
         "richmond",
         "kumamoto",
         "choco",
+        "san-marcos",
     ]
     assert cases[1] == QADIRABAD_SUMMARY
 
