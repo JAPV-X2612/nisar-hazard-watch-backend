@@ -1,8 +1,55 @@
 import re
 from typing import Any
 
-FORBIDDEN_WORDS = frozenset({"ha", "probability", "depth", "cm", "causal"})
+# Kept apart from the production denylist on purpose, and wider: a copy could not catch its gaps.
+FORBIDDEN_WORDS = frozenset(
+    {
+        "accuracy",
+        "acre",
+        "acres",
+        "affected",
+        "cm",
+        "damage",
+        "damaged",
+        "detected",
+        "detection",
+        "flooded",
+        "forecast",
+        "ha",
+        "km",
+        "km2",
+        "likelihood",
+        "m2",
+        "mm",
+        "risk",
+        "severity",
+        "submerged",
+        "subsidence",
+        "uplift",
+        "velocity",
+        "volume",
+    }
+)
+# Any word that starts with one of these: probability, probabilities, inundated, hectares...
+FORBIDDEN_PREFIXES = (
+    "area",
+    "attribut",
+    "caus",
+    "deform",
+    "depth",
+    "displac",
+    "hectar",
+    "inundat",
+    "probab",
+)
 WORD = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")
+
+
+def _is_forbidden(key: str) -> bool:
+    words = {word.lower() for word in WORD.findall(key)}
+    return bool(words & FORBIDDEN_WORDS) or any(
+        word.startswith(FORBIDDEN_PREFIXES) for word in words
+    )
 
 
 def forbidden_keys(payload: Any, path: str = "") -> list[str]:
@@ -14,7 +61,7 @@ def forbidden_keys(payload: Any, path: str = "") -> list[str]:
     if isinstance(payload, dict):
         for key, value in payload.items():
             here = f"{path}.{key}"
-            if {word.lower() for word in WORD.findall(str(key))} & FORBIDDEN_WORDS:
+            if _is_forbidden(str(key)):
                 found.append(here)
             found.extend(forbidden_keys(value, here))
     elif isinstance(payload, list):

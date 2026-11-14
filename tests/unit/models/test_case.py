@@ -41,3 +41,25 @@ def test_the_word_check_flags_hectares_but_not_shape_or_phase() -> None:
 
     # Assert
     assert found == [".areaHa", ".x.depth_m"]
+
+
+def test_the_test_list_flags_nested_unit_and_plural_keys_the_old_list_missed() -> None:
+    # Arrange
+    payload = {
+        "losDisplacementMm": 1,
+        "flooded_area_km2": 2,
+        "x": {"floodProbabilities": [0.1], "inundatedFraction": 0.2, "causedBy": "rain"},
+        "calibratedFloodClassifier": False,
+    }
+
+    # Act
+    found = forbidden_keys(payload)
+
+    # Assert
+    assert found == [
+        ".losDisplacementMm",
+        ".flooded_area_km2",
+        ".x.floodProbabilities",
+        ".x.inundatedFraction",
+        ".x.causedBy",
+    ]
